@@ -7,10 +7,13 @@
   "The whole game state is a map with keys for each character, storing
   their personal beliefs. Each character's beliefs are structured like
 
-  {source {target feeling}}
+  {source {target {:feeling feeling}}}
 
   where source and target are character ids, and feeling is a
-  keyword, :like / :fear / :anger / :none."
+  keyword, :like / :fear / :anger / :none.
+
+  The map {:feeling feeling} is known as feelinfo and has metadata for
+  ::sources (), ::because."
   [characters]
   (let [target-beliefs {}
         personal-beliefs (zipmap characters (repeat target-beliefs))]
@@ -22,8 +25,8 @@
 (defn belief-seq
   [beliefs]
   (for [[source m] beliefs
-        [target feeling] m]
-    [source target feeling]))
+        [target feelinfo] m]
+    [source target feelinfo]))
 
 (defn choose-gossip
   "Character 'speaker' tells another character 'listener' one of their
@@ -43,61 +46,69 @@
 
 (defn learn
   [beliefs belief]
-  (let [[source target feeling] belief]
-    (assoc-in beliefs [source target] feeling)))
+  (let [[source target feelinfo] belief]
+    (assoc-in beliefs [source target] feelinfo)))
 
 (defn felt-for-who
-  [feeling ones-beliefs]
-  (keep (fn [[target x]]
-          (when (= x feeling) target))
+  [ones-beliefs feeling]
+  (keep (fn [[target info]]
+          (when (= (:feeling info) feeling) target))
         ones-beliefs))
 
 ;;; ## Rules
 
 (defn dont-fear-each-other
-  [beliefs me you]
+  [beliefs me]
   (for [other (felt-for-who (get beliefs me) :fear)
-        :let [their-feeling (get-in beliefs [other me])]
-        :when (= :fear their-feeling)]
-    [me other :none]))
+        :let [their-feelinfo (get-in beliefs [other me])]
+        :when (= :fear (:feeling their-feelinfo))]
+    [me other (with-meta {:feeling :none}
+                {::because [other me their-feelinfo]})]))
 
 (defn like-back
-  [beliefs me you]
+  [beliefs me]
   (for [other (keys (dissoc beliefs me))
-        :let [their-feeling (get-in beliefs [other me])]
-        :when (= :like their-feeling)
-        :let [my-feeling (get-in beliefs [me other])]
+        :let [their-feelinfo (get-in beliefs [other me])]
+        :when (= :like (:feeling their-feelinfo))
+        :let [my-feeling (get-in beliefs [me other :feeling])]
         :when (not= :like my-feeling)]
-    [me other :like]))
+    [me other (with-meta {:feeling :like}
+                {::because [other me their-feelinfo]})]))
 
 (defn anger-response
-  [beliefs me you]
+  [beliefs me]
   (for [other (keys (dissoc beliefs me))
-        :when (= :anger (get-in beliefs [other me]))
-        :let [my-feeling (get-in beliefs [me other])]
+        :let [their-feelinfo (get-in beliefs [other me])]
+        :when (= :anger (:feeling their-feelinfo))
+        :let [my-feeling (get-in beliefs [me other :feeling])]
         :when (not (contains? #{:anger :fear} my-feeling))
         :let [new-feeling (rand-nth [:anger :fear])]]
-    [me other new-feeling]))
+    [me other (with-meta {:feeling new-feeling}
+                {::because [other me their-feelinfo]})]))
 
 (defn jealousy-or-grouping
   [beliefs me]
   (for [my-like (felt-for-who (get beliefs me) :like)
-        their-like (felt-for-who (get beliefs my-like) :like)
-        :when (not= their-like me)
-        :let [my-feeling (get-in beliefs [me their-like])]
+        other (felt-for-who (get beliefs my-like) :like)
+        :when (not= other me)
+        :let [my-feeling (get-in beliefs [me other :feeling])]
         :when (not (contains? #{:anger :like} my-feeling))
-        :let [new-feeling (rand-nth [:anger :like])]]
-    [me their-like new-feeling]))
+        :let [new-feeling (rand-nth [:anger :like])]
+        :let [cause [my-like other (get-in beliefs [my-like other])]]]
+    [me other (with-meta {:feeling new-feeling}
+                {::because cause})]))
 
 (defn loyalty
   [beliefs me]
   (for [my-like (felt-for-who (get beliefs me) :like)
-        their-fear (felt-for-who (get beliefs my-like) :fear)
-        :when (not= their-fear me)
-        :let [my-feeling (get-in beliefs [me their-fear])]
+        other (felt-for-who (get beliefs my-like) :fear)
+        :when (not= other me)
+        :let [my-feeling (get-in beliefs [me other :feeling])]
         :when (not (contains? #{:anger :fear} my-feeling))
-        :let [new-feeling (rand-nth [:anger :fear])]]
-    [me their-fear new-feeling]))
+        :let [new-feeling (rand-nth [:anger :fear])]
+        :let [cause [my-like other (get-in beliefs [my-like other])]]]
+    [me other (with-meta {:feeling new-feeling}
+                {::because cause})]))
 
 (def responses
   [dont-fear-each-other
