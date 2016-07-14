@@ -1,6 +1,7 @@
 (ns gossip.core
   (:gen-class)
   (:require [clojure.set :as set]
+            [clojure.string :as str]
             [datascript.core :as d]))
 
 (def db-schema
@@ -16,7 +17,7 @@
                   :db/valueType :db.type/ref}
    :belief/source {:db/doc "Who did I learn this from."
                    :db/cardinality :db.cardinality/one}
-   :belief/thought {:db/doc "An english phrase expressing this belief/feeling."
+   :belief/phrase {:db/doc "An english phrase expressing this belief/feeling."
                     :db/cardinality :db.cardinality/one}
    :relation/subject {:db/doc "Which character is the subject of this relationship, eg the angry one."
                       :db/cardinality :db.cardinality/one}
@@ -28,15 +29,15 @@
 
 (defn people-datoms
   "The datoms listing each character that will be in the
-  simulation. Give a map of keywords to names (strings)."
+  simulation. Give a map of keywords to gender keywords."
   [character-map]
-  (for [[k name] character-map]
-    {:person/id k
-     :person/name name}))
+  (for [[id g] character-map]
+    {:person/id id
+     :person/gender g}))
 
 (def feelings-q
   "Query to pull out all relationship belief entities, parameterised by mind."
-  '[:find (pull ?e [*])
+  '[:find [(pull ?e [*]) ...]
     :in $ ?mind
     :where
     [?e :belief/mind ?mind]
@@ -62,15 +63,14 @@
     (loop [bs (shuffle bs)]
       (if-let [belief (first bs)]
         ;; check whether listener already knows this
-        (let [new-belief (assoc belief :belief/mind listener)
-              their-existing-belief (existing-relation conn new-belief)
-              ]
+        (let [their (assoc belief :belief/mind listener)
+              their-existing-belief (existing-relation conn their)]
           (if (= (:relation/feeling their-existing-belief)
-                 (:relation/feeling new-belief))
+                 (:relation/feeling belief))
             ;; already known, continue
             (recur (rest bs))
             ;; got one
-            new-belief))
+            belief))
         ;; checked all, no new gossip
         nil))))
 
@@ -81,14 +81,14 @@
     (assoc new-belief :db/id eid)))
 
 (defn believe!
-  [conn mind subject object feeling]
-  (let [belief {:belief/mind mind
-                :relation/subject subject
-                :relation/object object
-                :relation/feeling feeling}
-        em (updatable-relation conn belief)]
-    (d/transact! conn [em])
-    em))
+  ([conn mind subject object feeling]
+   (let [belief {:belief/mind mind
+                 :relation/subject subject
+                 :relation/object object
+                 :relation/feeling feeling}]
+     (believe! conn belief)))
+  ([conn belief]
+   (d/transact! conn [(updatable-relation conn belief)])))
 
 (def dbrules
   '[[(feels-for ?e ?mind ?subject ?object ?feeling)
@@ -114,8 +114,7 @@
       {:db/id e1
        :relation/feeling :none
        :belief/cause e2
-       :belief/source mind
-       :belief/thought
+       :belief/phrase
        (format "Huh? You mean %s is afraid of me?? Well I shouldn't be afraid of them any more!"
                (name x))})))
 
@@ -137,8 +136,7 @@
              :db/id (or (:db/id existing) -1)
              :relation/feeling :like
              :belief/cause e1
-             :belief/source mind
-             :belief/thought
+             :belief/phrase
              (format "%s likes me! We can be friends."
                      (name x))))))
 
@@ -161,8 +159,7 @@
              :db/id (or (:db/id existing) -1)
              :relation/feeling new-feeling
              :belief/cause e1
-             :belief/source mind
-             :belief/thought
+             :belief/phrase
              (cond
                (= :anger new-feeling)
                (format "Well if %s is angry with me then I'm angry too."
@@ -192,14 +189,13 @@
              :db/id (or (:db/id existing) -1)
              :relation/feeling new-feeling
              :belief/cause e2
-             :belief/source mind
-             :belief/thought
+             :belief/phrase
              (cond
                (= :anger new-feeling)
                (format "Oh, why does %1$s like %2$s? I want %1$s to only like me. Now I'm angry with %2$s."
                        (name x) (name other))
                (= :like new-feeling)
-               (format "Great, %1$s likes %2$s so they must be fun, we can all hang out together."
+               (format "Great, %1$s likes %2$s so they must be fun, I'll be friends with them too."
                        (name x) (name other)))))))
 
 (defn me-like-x-&-x-fear-y-response
@@ -218,27 +214,179 @@
   [conn mind]
   )
 
+(def all-response-fns
+  [mutual-fear-response
+   x-like-me-response
+   x-angry-me-response
+   me-like-x-&-x-like-y-response])
+
 (comment
   (use 'clojure.pprint)
   (def conn (d/create-conn db-schema))
-  (believe! conn :fred :fred :ethel :fear)
-  (believe! conn :fred :ethel :fred :fear)
+  (d/transact! conn (people-datoms {:fred :male
+                                    :ethel :female
+                                    :sam :male}))
+  (believe! conn :fred :fred :ethel :like)
+  (believe! conn :fred :fred :sam :like)
   (pprint (d/q feelings-q @conn :fred))
-  (d/transact! conn (dont-fear-each-other conn :fred))
+  (d/transact! conn (mutual-fear-response conn :fred))
+  (mutual-fear-response conn :fred)
+
   (pprint (d/q feelings-q @conn :fred))
 )
 
+(defn derive-beliefs
+  [conn mind]
+  (mapcat (fn [response-fn]
+            (response-fn conn mind))
+          all-response-fns))
 
-(comment
+(def meeting-phrases
+  ["At a party that night, %s walks over to %s and tells HIM/HER:"
+   "The next day, %s sees %s at the park and tells HIM/HER:"
+   "In maths class, %s passes a note to %s which says:"])
 
-  (defn random-meeting
-   [state]
-   (let [chars (::characters state)
-         speaker (rand-nth (seq chars))
-         listener (rand-nth (seq (disj chars speaker)))]
-     (meet state speaker listener))))
+(def message-prefixes
+  ["Did you know?"
+   "I wanted to tell you,"
+   "OMG I can't believe it!"])
 
+(def positive-response-phrases
+  ["That's cool."
+   "Oh wow."])
 
+(def negative-response-phrases
+  ["That sucks."
+   "Oh man, that's just like them."])
+
+(defn phrase-belief
+  [conn belief speaker listener]
+  (let [subj (:relation/subject belief)
+        obj (:relation/object belief)
+        feel (:relation/feeling belief)
+        my-feeling? (= subj speaker)
+        your-feeling? (= subj listener)
+        about-me? (= obj speaker)
+        about-you? (= obj listener)
+        obj-name (cond
+                   (= listener obj) "you"
+                   (= speaker obj) "me"
+                   :else (name obj))]
+    (cond
+      ;; my feeling
+      (= subj speaker) ;; quite different grammar...
+      (case feel
+        :like (format "I like %s." obj-name)
+        :anger (format "I'm angry with %s." obj-name)
+        :fear (format "I'm afraid of %s." obj-name)
+        (format "I'm %s with %s." feel obj-name))
+      ;; your feeling
+      (= subj listener)
+      (case feel
+        :like (format "you like %s." obj-name)
+        :anger (format "you are angry with %s." obj-name)
+        :fear (format "you are afraid of %s." obj-name)
+        (format "you are %s with %s." feel obj-name))
+      ;; someone else's feeling
+      :else
+      (case feel
+        :like (format "%s likes %s." (name subj) obj-name)
+        :anger (format "%s is angry with %s." (name subj) obj-name)
+        :fear (format "%s is afraid of %s." (name subj) obj-name)
+        (format "%s is %s with %s." (name subj) feel obj-name))
+      )
+    ))
+
+(defn meet
+  "Returns keys :gossip :narrative"
+  [conn speaker listener]
+  (if-let [belief (choose-belief-for-gossip conn speaker listener)]
+    (let [goss (-> belief
+                   (select-keys [:relation/subject
+                                 :relation/object
+                                 :relation/feeling])
+                   (assoc :belief/mind listener
+                          :belief/source speaker))
+          ;; TODO: we choose only unknown or contradictory info... what about confirmatory?
+          ;; TODO: what if belief subject is the listener? a confrontation.
+          message-prefix (rand-nth message-prefixes)
+          message-str (phrase-belief conn belief speaker listener)
+          explain-str (if-let [cause-e (:belief/cause belief)]
+                        ;; look up reason
+                        (let [cause (d/pull @conn '[*] (:db/id cause-e))]
+                          (str "It all started because "
+                               (phrase-belief conn cause speaker listener)))
+                        ;; not my own thought; I heard it from someone
+                        (if-let [source (:belief/source belief)]
+                          (cond
+                            (= source (:relation/subject belief))
+                            (format "%s told me HIM/HERself."
+                                    (name source))
+                            :else
+                            (format "I heard it from %s."
+                                    (name source)))
+                          ;; there is neither a cause nor a source
+                          ""))
+          meet-str (-> (rand-nth meeting-phrases)
+                       (format (name speaker) (name listener))
+                       ;(str/replace)
+                       )
+          ]
+      {:narrative [meet-str message-prefix message-str explain-str]
+       :gossip [goss]})
+    ;; no news
+    ;; TODO: become friends? spontaneous like
+    nil
+    ))
+
+(defn random-meet
+  [conn]
+  (let [people (d/q '[:find [?person ...]
+                      :where
+                      [_ :person/id ?person]]
+                    @conn)
+        speaker (rand-nth people)
+        listener (rand-nth (remove #(= speaker %) people))
+        foo (meet conn speaker listener)]
+    (assoc foo
+           :speaker speaker
+           :listener listener)
+    ))
+
+(defn think!
+  [conn mind]
+  (let [thoughts (derive-beliefs conn mind)]
+    (when (seq thoughts)
+      (d/transact! conn thoughts)
+      (println (format "%s thinks..." (name mind)))
+      (doseq [b thoughts]
+        (println (:belief/phrase b)))
+      thoughts)))
+
+(defn step!
+  [conn]
+  (let [meeting (random-meet conn)
+        {:keys [speaker listener gossip narrative]} meeting]
+    (when (seq gossip)
+      (d/transact! conn gossip)
+      (doseq [s narrative]
+        (println s))
+      (if-let [thoughts (think! conn listener)]
+        (do
+          ;; there might be more thoughts that can derived from these new ones:
+          (when (think! conn listener)
+            ;; there might be more thoughts that can derived from these new ones:
+            (when (think! conn listener)
+              ;; ok let's not go crazy here... stop.
+              nil))
+          (print (format "%s replies, " (name listener)))
+          (if (contains? #{:anger :fear} (:relation/feeling (first thoughts)))
+            (println (rand-nth negative-response-phrases))
+            (println (rand-nth positive-response-phrases))))
+        ;; no derived thoughts
+        (do
+          (print (format "%s replies, " (name listener)))
+          (println (rand-nth positive-response-phrases)))))))
 
 (defn -main
   [& args]
