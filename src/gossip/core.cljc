@@ -1,5 +1,4 @@
 (ns gossip.core
-  (:gen-class)
   (:require [clojure.set :as set]
             [clojure.string :as str]
             [datascript.core :as d]))
@@ -387,7 +386,3 @@
         (do
           (print (format "%s replies, " (name listener)))
           (println (rand-nth positive-response-phrases)))))))
-
-(defn -main
-  [& args]
-  (println "Hello, World!"))
