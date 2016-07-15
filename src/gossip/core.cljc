@@ -1,7 +1,9 @@
 (ns gossip.core
-  (:require [clojure.set :as set]
+  (:require [datascript.core :as d]
+            [clojure.set :as set]
             [clojure.string :as str]
-            [datascript.core :as d]))
+            #?(:cljs [goog.string :as gstring :refer [format]])
+            #?(:cljs [goog.string.format])))
 
 (def db-schema
   {:person/id {:db/doc "A character's keyword id, used in beliefs."
@@ -44,26 +46,26 @@
     ])
 
 (defn existing-relation
-  [conn belief]
+  [db belief]
   (d/q '[:find (pull ?e [*]) .
          :in $ [?mind ?x ?y]
          :where
          [?e :belief/mind ?mind]
          [?e :relation/subject ?x]
          [?e :relation/object ?y]]
-       @conn
+       db
        (map belief [:belief/mind
                     :relation/subject
                     :relation/object])))
 
 (defn choose-belief-for-gossip
-  [conn speaker listener]
-  (let [bs (d/q feelings-q @conn speaker)]
+  [db speaker listener]
+  (let [bs (d/q feelings-q db speaker)]
     (loop [bs (shuffle bs)]
       (if-let [belief (first bs)]
         ;; check whether listener already knows this
         (let [their (assoc belief :belief/mind listener)
-              their-existing-belief (existing-relation conn their)]
+              their-existing-belief (existing-relation db their)]
           (if (= (:relation/feeling their-existing-belief)
                  (:relation/feeling belief))
             ;; already known, continue
@@ -74,20 +76,20 @@
         nil))))
 
 (defn updatable-relation
-  [conn new-belief]
-  (let [existing (existing-relation conn new-belief)
+  [db new-belief]
+  (let [existing (existing-relation db new-belief)
         eid (or (:db/id existing) -1)]
     (assoc new-belief :db/id eid)))
 
-(defn believe!
-  ([conn mind subject object feeling]
+(defn believe
+  ([db mind subject object feeling]
    (let [belief {:belief/mind mind
                  :relation/subject subject
                  :relation/object object
                  :relation/feeling feeling}]
-     (believe! conn belief)))
-  ([conn belief]
-   (d/transact! conn [(updatable-relation conn belief)])))
+     (believe db belief)))
+  ([db belief]
+   (d/db-with db [(updatable-relation db belief)])))
 
 (def dbrules
   '[[(feels-for ?e ?mind ?subject ?object ?feeling)
@@ -101,14 +103,14 @@
 ;;; ## Responses
 
 (defn mutual-fear-response
-  [conn mind]
+  [db mind]
   (let [ans (d/q '[:find ?x ?e1 ?e2
                    :in $ ?mind %
                    :where
                    (feels-for ?e1 ?mind ?mind ?x :fear)
                    (feels-for ?e2 ?mind ?x ?mind :fear)
                    ]
-                 @conn mind dbrules)]
+                 db mind dbrules)]
     (for [[x e1 e2] ans]
       {:db/id e1
        :relation/feeling :none
@@ -118,18 +120,18 @@
                (name x))})))
 
 (defn x-like-me-response
-  [conn mind]
+  [db mind]
   (let [ans (d/q '[:find ?x ?e1
                    :in $ ?mind %
                    :where
                    (feels-for ?e1 ?mind ?x ?mind :like)
                    ]
-                 @conn mind dbrules)]
+                 db mind dbrules)]
     (for [[x e1] ans
           :let [relation {:belief/mind mind
                           :relation/subject mind
                           :relation/object x}
-                existing (existing-relation conn relation)]
+                existing (existing-relation db relation)]
           :when (not= :like (:relation/feeling existing))]
       (assoc relation
              :db/id (or (:db/id existing) -1)
@@ -140,18 +142,18 @@
                      (name x))))))
 
 (defn x-angry-me-response
-  [conn mind]
+  [db mind]
   (let [ans (d/q '[:find ?x ?e1
                    :in $ ?mind %
                    :where
                    (feels-for ?e1 ?mind ?x ?mind :anger)
                    ]
-                 @conn mind dbrules)]
+                 db mind dbrules)]
     (for [[x e1] ans
           :let [relation {:belief/mind mind
                           :relation/subject mind
                           :relation/object x}
-                existing (existing-relation conn relation)]
+                existing (existing-relation db relation)]
           :when (not (contains? #{:anger :fear} (:relation/feeling existing)))
           :let [new-feeling (rand-nth [:anger :fear])]]
       (assoc relation
@@ -168,7 +170,7 @@
                        (name x)))))))
 
 (defn me-like-x-&-x-like-y-response
-  [conn mind]
+  [db mind]
   (let [ans (d/q '[:find ?x ?other ?e2
                    :in $ ?mind %
                    :where
@@ -176,12 +178,12 @@
                    (feels-for ?e2 ?mind ?x ?other :like)
                    [(not= ?other ?mind)]
                    ]
-                 @conn mind dbrules)]
+                 db mind dbrules)]
     (for [[x other e2] ans
           :let [relation {:belief/mind mind
                           :relation/subject mind
                           :relation/object other}
-                existing (existing-relation conn relation)]
+                existing (existing-relation db relation)]
           :when (not (contains? #{:anger :like} (:relation/feeling existing)))
           :let [new-feeling (rand-nth [:anger :like])]]
       (assoc relation
@@ -198,19 +200,19 @@
                        (name x) (name other)))))))
 
 (defn me-like-x-&-x-fear-y-response
-  [conn mind]
+  [db mind]
   )
 
 (defn me-like-x-&-y-angry-x-response
-  [conn mind]
+  [db mind]
   )
 
 (defn me-fear-x-&-y-angry-x-response
-  [conn mind]
+  [db mind]
   )
 
 (defn me-angry-x-&-y-angry-x-response
-  [conn mind]
+  [db mind]
   )
 
 (def all-response-fns
@@ -221,23 +223,23 @@
 
 (comment
   (use 'clojure.pprint)
-  (def conn (d/create-conn db-schema))
-  (d/transact! conn (people-datoms {:fred :male
-                                    :ethel :female
-                                    :sam :male}))
-  (believe! conn :fred :fred :ethel :like)
-  (believe! conn :fred :fred :sam :like)
+  (def conn (atom (-> (d/empty-db db-schema)
+                      (d/db-with (people-datoms {:fred :male
+                                                 :ethel :female
+                                                 :sam :male})))))
+  (swap! conn believe :fred :fred :ethel :like)
+  (swap! conn believe :fred :fred :sam :like)
   (pprint (d/q feelings-q @conn :fred))
   (d/transact! conn (mutual-fear-response conn :fred))
-  (mutual-fear-response conn :fred)
+  (mutual-fear-response @conn :fred)
 
   (pprint (d/q feelings-q @conn :fred))
 )
 
 (defn derive-beliefs
-  [conn mind]
+  [db mind]
   (mapcat (fn [response-fn]
-            (response-fn conn mind))
+            (response-fn db mind))
           all-response-fns))
 
 (def meeting-phrases
@@ -259,7 +261,7 @@
    "Oh man, that's just like them."])
 
 (defn phrase-belief
-  [conn belief speaker listener]
+  [db belief speaker listener]
   (let [subj (:relation/subject belief)
         obj (:relation/object belief)
         feel (:relation/feeling belief)
@@ -298,8 +300,8 @@
 
 (defn meet
   "Returns keys :gossip :narrative"
-  [conn speaker listener]
-  (if-let [belief (choose-belief-for-gossip conn speaker listener)]
+  [db speaker listener]
+  (if-let [belief (choose-belief-for-gossip db speaker listener)]
     (let [goss (-> belief
                    (select-keys [:relation/subject
                                  :relation/object
@@ -309,12 +311,12 @@
           ;; TODO: we choose only unknown or contradictory info... what about confirmatory?
           ;; TODO: what if belief subject is the listener? a confrontation.
           message-prefix (rand-nth message-prefixes)
-          message-str (phrase-belief conn belief speaker listener)
+          message-str (phrase-belief db belief speaker listener)
           explain-str (if-let [cause-e (:belief/cause belief)]
                         ;; look up reason
-                        (let [cause (d/pull @conn '[*] (:db/id cause-e))]
+                        (let [cause (d/pull db '[*] (:db/id cause-e))]
                           (str "It all started because "
-                               (phrase-belief conn cause speaker listener)))
+                               (phrase-belief db cause speaker listener)))
                         ;; not my own thought; I heard it from someone
                         (if-let [source (:belief/source belief)]
                           (cond
@@ -331,58 +333,70 @@
                        ;(str/replace)
                        )
           ]
-      {:narrative [meet-str message-prefix message-str explain-str]
+      {:meet-phrase [meet-str]
+       :message [message-prefix message-str explain-str]
        :gossip [goss]})
     ;; no news
     ;; TODO: become friends? spontaneous like
     nil
     ))
 
+(defn all-people
+  [db]
+  (d/q '[:find [?person ...]
+         :where
+         [_ :person/id ?person]]
+       db))
+
 (defn random-meet
-  [conn]
-  (let [people (d/q '[:find [?person ...]
-                      :where
-                      [_ :person/id ?person]]
-                    @conn)
+  [db]
+  (let [people (all-people db)
         speaker (rand-nth people)
         listener (rand-nth (remove #(= speaker %) people))
-        foo (meet conn speaker listener)]
+        foo (meet db speaker listener)]
     (assoc foo
            :speaker speaker
            :listener listener)
     ))
 
-(defn think!
-  [conn mind]
-  (let [thoughts (derive-beliefs conn mind)]
-    (when (seq thoughts)
-      (d/transact! conn thoughts)
-      (println (format "%s thinks..." (name mind)))
-      (doseq [b thoughts]
-        (println (:belief/phrase b)))
-      thoughts)))
+(defn think
+  "Returns [db thoughts], where thoughts are any belief maps just
+  added to the database."
+  [db mind]
+  (let [thoughts (derive-beliefs db mind)]
+    [(if (seq thoughts)
+       (d/db-with db thoughts)
+       db)
+     thoughts]))
 
-(defn step!
-  [conn]
-  (let [meeting (random-meet conn)
-        {:keys [speaker listener gossip narrative]} meeting]
+(defn step
+  "Returns keys
+  :db :speaker :listener :gossip :meet-phrase :message :thoughts :reply
+  or nil if no gossip."
+  [db]
+  (let [meeting (random-meet db)
+        {:keys [speaker listener gossip meet-phrase message]} meeting]
     (when (seq gossip)
-      (d/transact! conn gossip)
-      (doseq [s narrative]
-        (println s))
-      (if-let [thoughts (think! conn listener)]
-        (do
-          ;; there might be more thoughts that can derived from these new ones:
-          (when (think! conn listener)
-            ;; there might be more thoughts that can derived from these new ones:
-            (when (think! conn listener)
-              ;; ok let's not go crazy here... stop.
-              nil))
-          (print (format "%s replies, " (name listener)))
-          (if (contains? #{:anger :fear} (:relation/feeling (first thoughts)))
-            (println (rand-nth negative-response-phrases))
-            (println (rand-nth positive-response-phrases))))
-        ;; no derived thoughts
-        (do
-          (print (format "%s replies, " (name listener)))
-          (println (rand-nth positive-response-phrases)))))))
+      (let [db (d/db-with db gossip)
+            [db thoughts1] (think db listener)]
+        (if thoughts1
+          (let [;; there might be more thoughts that can derived now:
+                [db thoughts2] (think db listener)
+                ;; there might be even more thoughts that can derived:
+                [db thoughts3] (if thoughts2
+                                 (think db listener)
+                                 [db nil])
+                ;; ok let's not go crazy... stop now.
+                reply (if (contains? #{:anger :fear}
+                                     (:relation/feeling (first thoughts1)))
+                        (rand-nth negative-response-phrases)
+                        (rand-nth positive-response-phrases))]
+            (assoc meeting
+                   :db db
+                   :thoughts (concat thoughts1 thoughts2 thoughts3)
+                   :reply reply))
+          ;; no derived thoughts
+          (let [reply (rand-nth positive-response-phrases)]
+            (assoc meeting
+                   :db db
+                   :reply reply)))))))
