@@ -8,7 +8,7 @@
 (def db-schema
   {:person/id {:db/doc "A character's keyword id, used in beliefs."
                :db/cardinality :db.cardinality/one
-               :db/unique :db.unique/value}
+               :db/unique :db.unique/identity}
    :person/gender {:db/doc "A character's sex, :female or :male"
                    :db/cardinality :db.cardinality/one}
    :belief/mind {:db/doc "Which character's mind this belief is held in."
@@ -100,6 +100,19 @@
      ]
     ])
 
+(defn replacem
+  [s replacements]
+  (reduce (fn [s [from to]]
+            (str/replace s from to))
+          s replacements))
+
+(defn him-her
+  [db person]
+  (case (-> (d/pull db [:person/gender] [:person/id person])
+            :person/gender)
+    :male "him"
+    :female "her"))
+
 ;;; ## Responses
 
 (defn mutual-fear-response
@@ -116,8 +129,8 @@
        :relation/feeling :none
        :belief/cause e2
        :belief/phrase
-       (format "Huh? You mean %s is afraid of me?? Well I shouldn't be afraid of them any more!"
-               (name x))})))
+       (replacem "Huh? You mean FOO is afraid of me?? Well I shouldn't be afraid of them any more!"
+                 {"FOO" (name x)})})))
 
 (defn x-like-me-response
   [db mind]
@@ -138,8 +151,8 @@
              :relation/feeling :like
              :belief/cause e1
              :belief/phrase
-             (format "%s likes me! We can be friends."
-                     (name x))))))
+             (replacem "FOO likes me! We can be friends."
+                       {"FOO" (name x)})))))
 
 (defn x-angry-me-response
   [db mind]
@@ -163,11 +176,11 @@
              :belief/phrase
              (cond
                (= :anger new-feeling)
-               (format "Well if %s is angry with me then I'm angry too."
-                       (name x))
+               (replacem "Well if FOO is angry with me then I'm angry too."
+                         {"FOO" (name x)})
                (= :fear new-feeling)
-               (format "Uh-oh, I'd better keep away from %s."
-                       (name x)))))))
+               (replacem "Uh-oh, I'd better keep away from FOO."
+                         {"FOO" (name x)}))))))
 
 (defn me-like-x-&-x-like-y-response
   [db mind]
@@ -193,11 +206,13 @@
              :belief/phrase
              (cond
                (= :anger new-feeling)
-               (format "Oh, why does %1$s like %2$s? I want %1$s to only like me. Now I'm angry with %2$s."
-                       (name x) (name other))
+               (replacem "Oh, why does SUBJ like OBJ? I want SUBJ to
+                             only like me. Now I'm angry with OBJ."
+                         {"SUBJ" (name x), "OBJ" (name other)})
                (= :like new-feeling)
-               (format "Great, %1$s likes %2$s so they must be fun, I'll be friends with them too."
-                       (name x) (name other)))))))
+               (replacem "Great, SUBJ likes OBJ so they must be fun,
+                             I'll be friends with them too."
+                         {"SUBJ" (name x), "OBJ" (name other)}))))))
 
 (defn me-like-x-&-x-fear-y-response
   [db mind]
@@ -243,9 +258,9 @@
           all-response-fns))
 
 (def meeting-phrases
-  ["At a party that night, %s walks over to %s and tells HIM/HER:"
-   "The next day, %s sees %s at the park and tells HIM/HER:"
-   "In maths class, %s passes a note to %s which says:"])
+  ["At a party that night, SPE walks over to LIS and tells HIM/HER:"
+   "The next day, SPE sees LIS at the park and tells HIM/HER:"
+   "In maths class, SPE passes a note to LIS which says:"])
 
 (def message-prefixes
   ["Did you know?"
@@ -299,7 +314,7 @@
     ))
 
 (defn meet
-  "Returns keys :gossip :narrative"
+  "Returns keys :gossip :message :meet-phrase"
   [db speaker listener]
   (if-let [belief (choose-belief-for-gossip db speaker listener)]
     (let [goss (-> belief
@@ -321,20 +336,21 @@
                         (if-let [source (:belief/source belief)]
                           (cond
                             (= source (:relation/subject belief))
-                            (format "%s told me HIM/HERself."
-                                    (name source))
+                            (replacem "FOO told me HIM/HERself."
+                                      {"FOO" (name source)
+                                       "HIM/HER" (him-her db source)})
                             :else
                             (format "I heard it from %s."
                                     (name source)))
                           ;; there is neither a cause nor a source
                           ""))
           meet-str (-> (rand-nth meeting-phrases)
-                       (format (name speaker) (name listener))
-                       ;(str/replace)
-                       )
+                       (replacem {"SPE" (name speaker)
+                                  "LIS" (name listener)
+                                  "HIM/HER" (him-her db listener)}))
           ]
-      {:meet-phrase [meet-str]
-       :message [message-prefix message-str explain-str]
+      {:meet-phrase meet-str
+       :message (str/join \newline [message-prefix message-str explain-str])
        :gossip [goss]})
     ;; no news
     ;; TODO: become friends? spontaneous like
