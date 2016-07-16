@@ -133,8 +133,15 @@
 
 (defn status-pane
   [app-state]
-    (let [db (:db @app-state)
-        people (gossip/all-people db)]
+  (let [db (:db @app-state)
+        people (gossip/all-people db)
+        belief-li (fn [belief]
+                    [:li {:class (case (:relation/feeling belief)
+                                   :like "bg-warning" ;; yellow
+                                   :anger "bg-danger" ;; red
+                                   :fear "bg-info" ;; blue
+                                   )}
+                     (gossip/phrase-belief db belief (:belief/mind belief) nil)])]
     [:div
      (into [:div.row]
            (for [person people]
@@ -147,16 +154,14 @@
                 [:div
                  (into [:ul.list-unstyled]
                        (for [belief (get by-subj person)]
-                         [:li
-                          (gossip/phrase-belief db belief person nil)]))
+                         (belief-li belief)))
                  (into [:div]
                        (for [[subj bs] (dissoc by-subj person)]
                          [:div
                           [:h5 (name subj)]
                           (into [:ul.list-unstyled]
                                 (for [belief bs]
-                                  [:li
-                                   (gossip/phrase-belief db belief person nil)]))]
+                                  (belief-li belief)))]
                          ))])
               ]))
      ]))
@@ -166,14 +171,14 @@
   (let [db (:db @app-state)
         people (gossip/all-people db)]
     [:div
-     [:div.row
-      (when (and (>= (count people) 2)
-                 (not (:encounter @app-state)))
+     (when (and (>= (count people) 2)
+                (not (:encounter @app-state)))
+       [:div.row
         [:div.col-md-4.col-md-offset-4
          [:button.btn.btn-primary.btn-block
           {:on-click (fn [e]
                        (if-let [ans (->> (repeatedly 100 #(gossip/step db))
-                                         (remove nil?)
+                                         (drop-while nil?)
                                          (first))]
                          (swap! app-state assoc
                                 :encounter ans)
@@ -181,8 +186,35 @@
                          nil))
            }
           "New encounter"
-          ]])
-      (when (:encounter @app-state)
+          ]]])
+     (when-let [enc (:encounter @app-state)]
+       (let [spe (name (:speaker enc))
+             lis (name (:listener enc))]
+         [:div.row
+          [:div.col-md-4
+           [:h2.text-center spe]
+           ]
+          [:div.col-md-4
+           [:p
+            (:meet-phrase enc)]
+           [:p
+            [:b (str spe ": ")]
+            (str \" (:message enc) \")]
+           [:p
+            [:i
+             [:b (str lis " thinks: ")]
+             (->> (:thoughts enc)
+                  (map :belief/phrase)
+                  (str/join \newline))]]
+           [:p
+            [:b (str lis ": ")]
+            (str \" (:reply enc) \")]
+           ]
+          [:div.col-md-4
+           [:h2.text-center lis]
+           ]]))
+     (when (:encounter @app-state)
+       [:div.row
         [:div.col-md-4.col-md-offset-4
          [:button.btn.btn-success.btn-block
           {:on-click (fn [e]
@@ -192,11 +224,7 @@
                                 :encounter nil)))
            }
           "Continue"
-          ]])]
-     [:div.row
-      [:div.col-lg-6
-       (str (:encounter @app-state))]]
-
+          ]]])
      ]))
 
 (defn navbar
