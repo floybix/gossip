@@ -45,15 +45,16 @@
        "male"]]
      ;; add button
      [:button.btn.btn-default
-      {:on-click #(let [s (str/replace (:name person) " " "_")
-                        id (keyword s)
-                        gender (if (:male? person)
-                                 :male :female)]
-                    (swap! app-state update :db
-                           d/db-with [{:person/id id
-                                       :person/gender gender}])
-                    (swap! app-state assoc-in [:adding-person :name] "")
-                    )
+      {:on-click
+       (fn [e]
+         (let [s (str/replace (:name person) " " "_")
+               id (keyword s)
+               gender (if (:male? person)
+                        :male :female)]
+           (swap! app-state update :db
+                  d/db-with [{:person/id id
+                              :person/gender gender}])
+           (swap! app-state assoc-in [:adding-person :name] "")))
        :disabled (when (str/blank? (:name person)) "disabled")}
       "Add person"]]))
 
@@ -68,7 +69,6 @@
       [:select.form-control
        {:on-change (fn [e]
                      (let [s (-> e .-target forms/getValue)]
-                       (println "subj" s)
                        (swap! app-state assoc-in
                               [:adding-belief :subject]
                               (when (seq s) (keyword s)))))}
@@ -83,7 +83,6 @@
       [:select.form-control
        {:on-change (fn [e]
                      (let [s (-> e .-target forms/getValue)]
-                       (println "feeling" s)
                        (swap! app-state assoc-in
                               [:adding-belief :feeling]
                               (keyword s))))}
@@ -101,7 +100,6 @@
       [:select.form-control
        {:on-change (fn [e]
                      (let [s (-> e .-target forms/getValue)]
-                       (println "obj s")
                        (swap! app-state assoc-in
                               [:adding-belief :object]
                               (when (seq s) (keyword s)))))}
@@ -114,22 +112,16 @@
        ]]
      ;; add button
      [:button.btn.btn-default
-      {:on-click #(let [{:keys [subject object feeling]} belief
-                        ;subject (keyword subject)
-                        ;object (keyword object)
-                        ;feeling (keyword feeling)
-                        ]
-                    (println belief)
-                    (swap! app-state update :db
-                           gossip/believe subject subject object feeling)
-                    (swap! app-state assoc-in [:adding-belief :object] nil)
-                    )
+      {:on-click
+       (fn [e]
+         (let [{:keys [subject object feeling]} belief]
+           (swap! app-state update :db
+                  gossip/believe subject subject object feeling)
+           (swap! app-state assoc-in [:adding-belief :object] nil)))
        :disabled (when-not (and (:subject belief)
                                 (:object belief))
                    "disabled")}
-      "Add belief"]
-     ])
-  )
+      "Add belief"]]))
 
 (defn status-pane
   [app-state]
@@ -148,23 +140,19 @@
              [:div.col.xs-6.sm-3.col-lg-2
               [:h4 (name person)]
               (let [by-subj (->> (d/q gossip/feelings-q db person)
-                                 (sort-by :relation/object)
-                                 (group-by :relation/subject))
-                    ]
+                                 (sort-by (juxt :relation/subject
+                                                :relation/object))
+                                 (group-by :relation/subject))]
                 [:div
                  (into [:ul.list-unstyled]
                        (for [belief (get by-subj person)]
                          (belief-li belief)))
-                 (into [:div]
-                       (for [[subj bs] (dissoc by-subj person)]
-                         [:div
-                          [:h5 (name subj)]
-                          (into [:ul.list-unstyled]
-                                (for [belief bs]
-                                  (belief-li belief)))]
-                         ))])
-              ]))
-     ]))
+                 [:h5 "I think:"]
+                 (into [:ul.list-unstyled]
+                       (for [[subj bs] (dissoc by-subj person)
+                             belief bs]
+                         (belief-li belief)))])
+              ]))]))
 
 (defn encounter-pane
   [app-status]
