@@ -3,6 +3,7 @@
             [goog.dom.forms :as forms]
             [datascript.core :as d]
             [gossip.core :as gossip]
+            [clojure.set :as set]
             [clojure.string :as str]))
 
 (enable-console-print!)
@@ -116,7 +117,7 @@
        (fn [e]
          (let [{:keys [subject object feeling]} belief]
            (swap! app-state update :db
-                  gossip/believe subject subject object feeling)
+                  gossip/believe subject subject subject object feeling)
            (swap! app-state assoc-in [:adding-belief :object] nil)))
        :disabled (when-not (and (:subject belief)
                                 (:object belief))
@@ -126,33 +127,114 @@
 (defn status-pane
   [app-state]
   (let [db (:db @app-state)
+        pov (:current-pov @app-state)
         people (gossip/all-people db)
-        belief-li (fn [belief]
-                    [:li {:class (case (:relation/feeling belief)
-                                   :like "bg-warning" ;; yellow
-                                   :anger "bg-danger" ;; red
-                                   :fear "bg-info" ;; blue
-                                   )}
-                     (gossip/phrase-belief db belief (:belief/mind belief) nil)])]
+        belief-li (fn [mind belief]
+                    (let [b-mind (:belief/mind belief)
+                          b-person (:belief/person belief) ; either pov or mind
+                          subj (:relation/subject belief)
+                          ;; wait, are we checking the feeling or checking the belief?
+                          check? (if (= b-person b-mind subj)
+                                   false true)]
+                      [:li
+                      {:class (case (:relation/feeling belief)
+                                :like "bg-warning" ;; yellow
+                                :anger "bg-danger" ;; red
+                                :fear "bg-info" ;; blue
+                                )}
+                       [(if (:missing? belief) :del :span)
+                        (gossip/phrase-belief db belief (:belief/mind belief) nil)]]))]
     [:div
+     [:div.row
+      [:div.col-lg-12
+       (if pov
+         [:p "Showing what " [:b (name pov)] " knows. "
+          [:button.btn-primary.btn-xs
+           {:on-click
+            (fn [e]
+              (swap! app-state assoc :current-pov nil))}
+           "Clear"]
+          " to show true feelings."]
+         [:p.text-muted
+          "Select one person to show what they know:"])]]
      (into [:div.row]
-           (for [person people]
-             [:div.col.xs-6.sm-3.col-lg-2
-              [:h4 (name person)]
-              (let [by-subj (->> (d/q gossip/feelings-q db person)
-                                 (sort-by (juxt :relation/subject
-                                                :relation/object))
-                                 (group-by :relation/subject))]
-                [:div
-                 (into [:ul.list-unstyled]
-                       (for [belief (get by-subj person)]
-                         (belief-li belief)))
-                 [:h5 "I think:"]
-                 (into [:ul.list-unstyled]
-                       (for [[subj bs] (dissoc by-subj person)
-                             belief bs]
-                         (belief-li belief)))])
+           (for [mind people]
+             [:div.col-xs-6.col-sm-4.col-md-3.col-lg-2
+              [:div.panel
+               {:class (if (= mind pov) "panel-primary" "panel-default")}
+               [:div.panel-heading
+                [:h4.panel-title
+                 (if (= mind pov)
+                   (name mind)
+                   [:a
+                    {:href "#"
+                     :on-click
+                     (fn [e]
+                       (swap! app-state assoc :current-pov mind))}
+                    (name mind)])]]
+               [:div.panel-body
+                (let [knowl (d/q gossip/my-knowledge-of-their-beliefs-q
+                                 db (or pov mind) mind)
+                      ;; also look up this mind's actual beliefs
+                      ;; - see what knowledge is missing and tag it
+                      missing (when (and pov (not= pov mind))
+                                (let [substance
+                                      (fn [b]
+                                        (select-keys b [:belief/mind
+                                                        :relation/subject
+                                                        :relation/object
+                                                        :relation/feeling]))
+                                      knowl* (set (map substance knowl))]
+                                  (remove #(contains? knowl* (substance %))
+                                          (d/q gossip/my-beliefs-q db mind))))
+                      by-subj (->> knowl
+                                   (concat (map #(assoc % :missing? true)
+                                                missing))
+                                   (sort-by (juxt :relation/subject
+                                                  :relation/object))
+                                   (group-by :relation/subject))]
+                  [:div
+                   (if-let [bs (get by-subj mind)]
+                     (into [:ul.list-unstyled]
+                           (for [belief bs]
+                             (belief-li mind belief)))
+                     [:p.small
+                      "I don't have any feelings."])
+                   (if (seq (dissoc by-subj mind))
+                     [:div
+                      [:h5 "I think:"]
+                      (into [:ul.list-unstyled]
+                            (for [[subj bs] (dissoc by-subj mind)
+                                  belief bs]
+                              (belief-li mind belief)))]
+                     [:p.small
+                      "I don't know about others."])])]]
               ]))]))
+
+(defn turn-part-pane
+  [part thoughts reply]
+  (let [{:keys [speaker listener db gossip minor-news]} part
+        spe (name speaker)
+        lis (name listener)]
+    [:div
+     [:p
+      [:b (str spe ": ")]
+      (str \"
+           (if gossip
+             (gossip/phrase-gossip db speaker listener gossip)
+             "I got nothing, sorry.")
+           \")]
+     (when (seq thoughts)
+       [:p
+        [:i
+         [:b (str lis " thinks: ")]
+         (->> thoughts
+              (map :belief/phrase)
+              (str/join \newline))]])
+     [:p
+      [:b (str lis ": ")]
+      (str \" reply \")]
+     ]))
 
 (defn encounter-pane
   [app-status]
@@ -165,42 +247,12 @@
         [:div.col-md-4.col-md-offset-4
          [:button.btn.btn-primary.btn-block
           {:on-click (fn [e]
-                       (if-let [ans (->> (repeatedly 100 #(gossip/step db))
-                                         (drop-while nil?)
-                                         (first))]
+                       (let [ans (gossip/random-turn db)]
                          (swap! app-state assoc
-                                :encounter ans)
-                         ;; no news!
-                         nil))
+                                :encounter ans)))
            }
           "New encounter"
           ]]])
-     (when-let [enc (:encounter @app-state)]
-       (let [spe (name (:speaker enc))
-             lis (name (:listener enc))]
-         [:div.row
-          [:div.col-md-4
-           [:h2.text-center spe]
-           ]
-          [:div.col-md-4
-           [:p
-            (:meet-phrase enc)]
-           [:p
-            [:b (str spe ": ")]
-            (str \" (:message enc) \")]
-           [:p
-            [:i
-             [:b (str lis " thinks: ")]
-             (->> (:thoughts enc)
-                  (map :belief/phrase)
-                  (str/join \newline))]]
-           [:p
-            [:b (str lis ": ")]
-            (str \" (:reply enc) \")]
-           ]
-          [:div.col-md-4
-           [:h2.text-center lis]
-           ]]))
      (when (:encounter @app-state)
        [:div.row
         [:div.col-md-4.col-md-offset-4
@@ -213,6 +265,57 @@
            }
           "Continue"
           ]]])
+     (when-let [enc (:encounter @app-state)]
+       (let [ini (name (:initiator enc))
+             par (name (:partner enc))]
+         [:div
+          [:div ;.col-md-4
+           [:p.lead
+            (:meet-phrase enc)]
+           [:div
+            {:style {:float "left"
+                     :padding "1em"
+                     :margin "1em"
+                     :border "1px solid black"}}
+            [:h2.text-center ini]
+            ]
+           (turn-part-pane (:fwd-part enc)
+                           (:fwd-thoughts enc)
+                           (:fwd-reply enc))
+           [:div
+            {:style {:float "right"
+                     :padding "1em"
+                     :margin "1em"
+                     :border "1px solid black"}}
+            [:h2.text-center par]
+            ]
+           (turn-part-pane (:back-part enc)
+                           (:back-thoughts enc)
+                           (:back-reply enc))
+           (when-let [thoughts (seq (:partner-thoughts enc))]
+             [:p
+              [:i
+               [:b (str par " thinks: ")]
+               (->> thoughts
+                    (map :belief/phrase)
+                    (str/join \newline))]
+              ])
+           (when-let [thoughts (seq (:initiator-thoughts enc))]
+             [:p
+              [:i
+               [:b (str ini " thinks: ")]
+               (->> thoughts
+                    (map :belief/phrase)
+                    (str/join \newline))]])
+           [:p (str (:gossip (:fwd-part enc)))]
+           [:p (str (:gossip (:back-part enc)))]
+           [:p (str (:fwd-thoughts enc))]
+           [:p (str (:back-thoughts enc))]
+           [:p (str (:partner-thoughts enc))]
+           [:p (str (:initiator-thoughts enc))]
+           ]
+          ]))
+
      ]))
 
 (defn navbar
@@ -253,8 +356,11 @@
       [add-person-pane app-state]]
      [:div.col-lg-6
       [add-belief-pane app-state]]]
-    [status-pane app-state]
-    [encounter-pane app-state]
+    [:div.row
+     [:div.col-lg-8.col-md-6
+      [status-pane app-state]]
+     [:div.col-lg-4.col-md-6
+      [encounter-pane app-state]]]
     ]
    ])
 
