@@ -122,7 +122,7 @@
        :disabled (when-not (and (:subject belief)
                                 (:object belief))
                    "disabled")}
-      "Add belief"]]))
+      "Add feeling"]]))
 
 (defn status-pane
   [app-state]
@@ -133,12 +133,14 @@
                     (let [b-mind (:belief/mind belief)
                           b-person (:belief/person belief) ; either pov or mind
                           subj (:belief/subject belief)
-                          ;; wait, are we checking the feeling or checking the belief?
-                          check? (if (= b-person b-mind subj)
-                                   false true)]
-                      [:li
-                       {:class (if (:missing? belief)
+                          ]
+                      [:li.belief
+                       {:class (cond
+                                 (:missing? belief)
                                  "text-muted"
+                                 (:belief/lie? belief)
+                                 "belief-lie"
+                                 :else
                                  (case (:belief/feeling belief)
                                    :like "bg-warning" ;; yellow
                                    :anger "bg-danger" ;; red
@@ -212,22 +214,46 @@
                                   belief bs]
                               (belief-li mind belief)))]
                      [:p.small
-                      "I don't know others' feelings."])])]
+                      "I don't know others' feelings."])
+                   (let [pops (->> (d/q gossip/perceived-popularity-q
+                                        db (or pov mind) mind)
+                                   (sort-by second >))
+                         maxpop (second (first pops))
+                         mostpop (->> pops
+                                      (take-while #(= maxpop (second %)))
+                                      (map first))]
+                     (if (>= maxpop 2)
+                       [:p
+                        (str/join " and " (map name mostpop))
+                        (if (> (count mostpop) 1) " are " " is ")
+                        "most popular."]
+                       [:p.small
+                        "I don't know who is most popular."]))])]
                [:div.panel-footer
-                (let [pops (d/q gossip/perceived-popularity-q
-                                db (or pov mind) mind)]
-                  (str (sort > pops))
-                  ;; who is most popular
+                (let [dto (d/q gossip/indebted-to-q db mind)]
+                  ;; how popular am i really
                   ;; who am i indebted to
+                  (when (seq dto)
+                    [:small "I owe gossip to "
+                     (str/join ", " (map name dto))])
                   )]]
               ]))]))
 
 (defn turn-part-pane
   [part thoughts reply]
-  (let [{:keys [speaker listener db gossip minor-news]} part
+  (let [{:keys [speaker listener gossip minor-news]} part
+        db (:db-before part)
         spe (name speaker)
         lis (name listener)]
     [:div
+     (when (gossip/indebted db speaker listener)
+       [:p
+        [:i
+         (str spe " knows " (gossip/he-she db speaker) " owes " lis
+              " some goss. "
+              (if (:belief/lie? gossip)
+                (str "In desperation, " (gossip/he-she db speaker) " makes something up:")
+                (str "Luckily, " (gossip/he-she db speaker) " has some:")))]])
      [:p
       [:b (str spe ": ")]
       (str \"
@@ -244,7 +270,11 @@
               (str/join \newline))]])
      [:p
       [:b (str lis ": ")]
-      (str \" reply \")]
+      (str \"
+           (if gossip
+             reply
+             "You owe me, ok?")
+           \")]
      ]))
 
 (defn encounter-pane
@@ -286,7 +316,7 @@
            [:div
             {:style {:float "left"
                      :padding "1em"
-                     :margin "1em"
+                     :margin "0 1em 1em 0"
                      :border "1px solid black"}}
             [:h2.text-center ini]
             ]
@@ -296,7 +326,7 @@
            [:div
             {:style {:float "right"
                      :padding "1em"
-                     :margin "1em"
+                     :margin "0 0 1em 1em"
                      :border "1px solid black"}}
             [:h2.text-center par]
             ]
@@ -324,6 +354,10 @@
            [:p (str (:back-thoughts enc))]
            [:p (str (:partner-thoughts enc))]
            [:p (str (:initiator-thoughts enc))]
+           [:p "Forward part minor news: "
+            (str (:minor-news (:fwd-part enc)))]
+           [:p "Back part minor news: "
+            (str (:minor-news (:back-part enc)))]
            ]
           ]))
 

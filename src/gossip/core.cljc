@@ -9,35 +9,25 @@
 
 (def db-schema
   {:person/id {:db/doc "A character's keyword id, used in beliefs."
-               :db/cardinality :db.cardinality/one
                :db/unique :db.unique/identity}
-   :person/gender {:db/doc "A character's sex, :female or :male"
-                   :db/cardinality :db.cardinality/one}
+   :person/gender {:db/doc "A character's sex, :female or :male"}
    :debt/from {:db/doc "Who owes the debt."
                :db/index true}
    :debt/to {:db/doc "Who the debt is owed to."}
    :belief/person {:db/doc "Who holds this belief."
-                   :db/cardinality :db.cardinality/one
                    :db/index true}
    :belief/mind {:db/doc "Who believes this? I.e. person believes that
                           mind thinks subject likes object."
-                 :db/cardinality :db.cardinality/one
                  :db/index true}
    :belief/cause {:db/doc "Which other belief led to this belief."
-                  :db/cardinality :db.cardinality/one
                   :db/valueType :db.type/ref}
-   :belief/source {:db/doc "Who did I learn this from."
-                   :db/cardinality :db.cardinality/one}
-   :belief/original {:db/doc "Who was the original source."
-                     :db/cardinality :db.cardinality/one}
-   :belief/phrase {:db/doc "An english phrase expressing this belief/feeling."
-                   :db/cardinality :db.cardinality/one}
-   :belief/subject {:db/doc "Who feels the feeling, eg the angry one."
-                    :db/cardinality :db.cardinality/one}
-   :belief/object {:db/doc "Who is the feeling felt for, eg the one angry with."
-                   :db/cardinality :db.cardinality/one}
-   :belief/feeling {:db/doc "What is the feeling, eg anger."
-                    :db/cardinality :db.cardinality/one}
+   :belief/source {:db/doc "Who did I learn this from."}
+   :belief/original {:db/doc "Who was the original source."}
+   :belief/lie? {:db/doc "True if this is a lie (unbeknownst to the holder)."}
+   :belief/phrase {:db/doc "An english phrase expressing this belief/feeling."}
+   :belief/subject {:db/doc "Who feels the feeling, eg the angry one."}
+   :belief/object {:db/doc "Who is the feeling felt for, eg the one angry with."}
+   :belief/feeling {:db/doc "What is the feeling, eg anger."}
    })
 
 (defn people-datoms
@@ -178,12 +168,18 @@
             (str/replace s from to))
           s replacements))
 
+(defn he-she
+  ([db person he she]
+   (case (-> (d/pull db [:person/gender] [:person/id person])
+             :person/gender)
+     :male he
+     :female she))
+  ([db person]
+   (he-she db person "he" "she")))
+
 (defn him-her
   [db person]
-  (case (-> (d/pull db [:person/gender] [:person/id person])
-            :person/gender)
-    :male "him"
-    :female "her"))
+  (he-she db person "him" "her"))
 
 ;;; ## Responses
 
@@ -476,7 +472,8 @@
             :you [other listener :anger]
             :them (let [other2 (rand-nth (remove #(= % other) others))]
                     [other other2 :fear])))))
-     (map #(zipmap [:belief/subject :belief/object :belief/feeling] %)))))
+     (map #(zipmap [:belief/subject :belief/object :belief/feeling] %))
+     (map #(assoc % :belief/lie? true)))))
 
 (defn indebted
   [db from to]
@@ -487,14 +484,12 @@
          [?e :debt/to ?to]]
        db from to))
 
-(defn indebted-to
-  [db from]
-  (d/q '[:find [?to ...]
-         :in $ ?from
-         :where
-         [?e :debt/from ?from]
-         [?e :debt/to ?to]]
-       db from))
+(def indebted-to-q
+  '[:find [?to ...]
+    :in $ ?from
+    :where
+    [?e :debt/from ?from]
+    [?e :debt/to ?to]])
 
 (defn prioritised-potential-gossip
   [db speaker listener]
@@ -527,7 +522,7 @@
   :minor-news?
   "
   [db speaker listener belief]
-  (let [belief (assoc belief :source speaker) ;; TODO: cause nil?
+  (let [belief (assoc belief :belief/source speaker) ;; TODO: cause nil?
         subj (:belief/subject belief)
         lis-facts {:my-mind (assoc belief
                                    :belief/person listener
@@ -573,8 +568,11 @@
   :narrative
   "
   [db speaker listener]
-  (let [owing (indebted db speaker listener)
-        ]
+  (let [db-before db
+        partial-result {:db-before db
+                        :speaker speaker
+                        :listener listener}
+        owing (indebted db speaker listener)]
     (loop [all-bs (prioritised-potential-gossip db speaker listener)
            minor-news []
            db db]
@@ -585,11 +583,10 @@
             ;; found substantial gossip, so stop telling, clear debt
             (let [db (cond-> (:db result)
                        owing (d/db-with [[:db.fn/retractEntity owing]]))]
-              {:db db
-               :speaker speaker
-               :listener listener
-               :gossip belief
-               :minor-news minor-news})
+              (assoc partial-result
+                     :db db
+                     :gossip belief
+                     :minor-news minor-news))
             ;; not news, keep trying
             (recur (rest all-bs)
                    (if (:minor-news? result)
@@ -601,16 +598,15 @@
         (let [db (cond-> db
                    (not owing) (d/db-with [{:debt/from speaker
                                             :debt/to listener}]))]
-          {:db db
-           :speaker speaker
-           :listener listener
-           :gossip nil
-           :minor-news minor-news})))))
+          (assoc partial-result
+                 :db db
+                 :gossip nil
+                 :minor-news minor-news))))))
 
 (defn turn
   "Person has a turn being the initiator of an encounter.
 
-g  Play proceeds as follows:
+  Play proceeds as follows:
 
   * Initiator chooses a partner. (currently random)
   * Forward part; initiator is speaker, partner is listener.
@@ -674,15 +670,16 @@ g  Play proceeds as follows:
                      (replacem {"SPE" (name initiator)
                                 "LIS" (name partner)
                                 "HIM/HER" (him-her db partner)}))
-        fwd-reply (if (contains? #{:anger :fear}
-                                 (:belief/feeling (first partner-thoughts1)))
-                    (rand-nth negative-response-phrases)
-                    (rand-nth positive-response-phrases))
-        back-reply (if (contains? #{:anger :fear}
-                                  (:belief/feeling (first initiat-thoughts1)))
-                    (rand-nth negative-response-phrases)
-                    (rand-nth positive-response-phrases))
-
+        fwd-reply (when (:gossip fwd-part)
+                    (if (contains? #{:anger :fear}
+                                   (:belief/feeling (first partner-thoughts1)))
+                      (rand-nth negative-response-phrases)
+                      (rand-nth positive-response-phrases)))
+        back-reply (when (:gossip back-part)
+                     (if (contains? #{:anger :fear}
+                                   (:belief/feeling (first initiat-thoughts1)))
+                      (rand-nth negative-response-phrases)
+                      (rand-nth positive-response-phrases)))
         ]
     {:db db
      :fwd-part fwd-part
