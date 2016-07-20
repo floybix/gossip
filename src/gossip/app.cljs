@@ -17,6 +17,17 @@
                          :object nil
                          :feeling :like}}))
 
+(def avatars
+  (let [humans ["👦" "👧" "👨" "👩" "👱" "👲" "👳" "👴" "👵" "👶" "👸" "🙍" "🙎" "💁" "🙋" "💂" "🕵" "🎅" "👼" "👷" "👮" "👰" "🙇"]
+        skins ["🏾" "🏻"]
+        others ["👹" "👺" "👻" "👽" "👿" "😺" "😼" "🐤" "🐥" "🐦" "🐧" "🐨" "🐬" "🐭" "🐮" "🐯" "🐰" "🐱" "🐲" "🐳" "🐴" "🐵" "🐶" "🐷" "🐸" "🐹" "🐺" "🐻" "🐼" "🐽" "💩"
+]]
+    (vec (concat humans
+                 (for [skin skins
+                       x humans]
+                   (str x skin))
+                 others))))
+
 (defn add-person-pane
   [app-state]
   (let [person (:adding-person @app-state)]
@@ -39,7 +50,7 @@
        [:input
         {:type :checkbox
          :checked (if (:male? person) true)
-         :on-change (fn [e]
+         :on-change (fn [_]
                       (swap! app-state update-in
                              [:adding-person :male?]
                              not))}]
@@ -47,14 +58,16 @@
      ;; add button
      [:button.btn.btn-default
       {:on-click
-       (fn [e]
+       (fn [_]
          (let [s (str/replace (:name person) " " "_")
                id (keyword s)
                gender (if (:male? person)
-                        :male :female)]
+                        :male :female)
+               avatar (if (:male? person) (first avatars) (second avatars))]
            (swap! app-state update :db
                   d/db-with [{:person/id id
-                              :person/gender gender}])
+                              :person/gender gender
+                              :person/avatar avatar}])
            (swap! app-state assoc-in [:adding-person :name] "")))
        :disabled (when (str/blank? (:name person)) "disabled")}
       "Add person"]]))
@@ -114,7 +127,7 @@
      ;; add button
      [:button.btn.btn-default
       {:on-click
-       (fn [e]
+       (fn [_]
          (let [{:keys [subject object feeling]} belief]
            (swap! app-state update :db
                   gossip/believe subject subject subject object feeling)
@@ -155,80 +168,101 @@
          [:p "Showing what " [:b (name pov)] " knows. "
           [:button.btn-primary.btn-xs
            {:on-click
-            (fn [e]
+            (fn [_]
               (swap! app-state assoc :current-pov nil))}
            "Show true feelings"]]
          [:p.text-muted
           "Select one person to show what they know:"])]]
      (into [:div.row]
-           (for [mind people]
+           (for [mind people
+                 :let [avatar (:person/avatar
+                               (d/pull db '[*] [:person/id mind]))]]
              [:div.col-xs-6.col-sm-4.col-md-3.col-lg-2
               [:div.panel
                {:class (if (= mind pov) "panel-primary" "panel-default")}
                [:div.panel-heading
                 [:h4.panel-title
+                 [:a
+                  {:on-click
+                   (fn [_]
+                     (swap! app-state assoc :choosing-avatar mind))}
+                  (str avatar " ")]
                  (if (= mind pov)
                    (name mind)
                    [:a
                     {:href "#"
                      :on-click
-                     (fn [e]
+                     (fn [_]
                        (swap! app-state assoc :current-pov mind))}
                     (name mind)])
                  (if (and pov (not= mind pov))
                    [:small (str " according to " (name pov))])]
                 ]
                [:div.panel-body
-                (let [knowl (d/q gossip/my-knowledge-of-their-beliefs-q
-                                 db (or pov mind) mind)
-                      ;; also look up this mind's actual beliefs
-                      ;; - see what knowledge is missing and tag it
-                      missing (when (and pov (not= pov mind))
-                                (let [substance
-                                      (fn [b]
-                                        (select-keys b [:belief/mind
-                                                        :belief/subject
-                                                        :belief/object
-                                                        :belief/feeling]))
-                                      knowl* (set (map substance knowl))]
-                                  (remove #(contains? knowl* (substance %))
-                                          (d/q gossip/my-beliefs-q db mind))))
-                      by-subj (->> knowl
-                                   (concat (map #(assoc % :missing? true)
-                                                missing))
-                                   (sort-by (juxt :belief/subject
-                                                  :belief/object))
-                                   (group-by :belief/subject))]
-                  [:div
-                   (if-let [bs (get by-subj mind)]
-                     (into [:ul.list-unstyled]
-                           (for [belief bs]
-                             (belief-li mind belief)))
-                     [:p.small
-                      "I don't have any feelings."])
-                   (if (seq (dissoc by-subj mind))
-                     [:div
-                      [:h5 "I think:"]
+                (if (= mind (:choosing-avatar @app-state))
+                  (into
+                   [:div
+                    [:p.small "Pick an avatar:"]]
+                   (for [a avatars]
+                     [:a
+                      {:on-click
+                       (fn [_]
+                         (swap! app-state update :db
+                                d/db-with [{:person/id mind
+                                            :person/avatar a}])
+                         (swap! app-state
+                                assoc :choosing-avatar nil))}
+                      a]))
+                  (let [knowl (d/q gossip/my-knowledge-of-their-beliefs-q
+                                  db (or pov mind) mind)
+                       ;; also look up this mind's actual beliefs
+                       ;; - see what knowledge is missing and tag it
+                       missing (when (and pov (not= pov mind))
+                                 (let [substance
+                                       (fn [b]
+                                         (select-keys b [:belief/mind
+                                                         :belief/subject
+                                                         :belief/object
+                                                         :belief/feeling]))
+                                       knowl* (set (map substance knowl))]
+                                   (remove #(contains? knowl* (substance %))
+                                           (d/q gossip/my-beliefs-q db mind))))
+                       by-subj (->> knowl
+                                    (concat (map #(assoc % :missing? true)
+                                                 missing))
+                                    (sort-by (juxt :belief/subject
+                                                   :belief/object))
+                                    (group-by :belief/subject))]
+                   [:div
+                    (if-let [bs (get by-subj mind)]
                       (into [:ul.list-unstyled]
-                            (for [[subj bs] (dissoc by-subj mind)
-                                  belief bs]
-                              (belief-li mind belief)))]
-                     [:p.small
-                      "I don't know others' feelings."])
-                   (let [pops (->> (d/q gossip/perceived-popularity-q
-                                        db (or pov mind) mind)
-                                   (sort-by second >))
-                         maxpop (second (first pops))
-                         mostpop (->> pops
-                                      (take-while #(= maxpop (second %)))
-                                      (map first))]
-                     (if (>= maxpop 2)
-                       [:p
-                        (str/join " and " (map name mostpop))
-                        (if (> (count mostpop) 1) " are " " is ")
-                        "most popular."]
-                       [:p.small
-                        "I don't know who is most popular."]))])]
+                            (for [belief bs]
+                              (belief-li mind belief)))
+                      [:p.small
+                       "I don't have any feelings."])
+                    (if (seq (dissoc by-subj mind))
+                      [:div
+                       [:h5 "I think:"]
+                       (into [:ul.list-unstyled]
+                             (for [[subj bs] (dissoc by-subj mind)
+                                   belief bs]
+                               (belief-li mind belief)))]
+                      [:p.small
+                       "I don't know others' feelings."])
+                    (let [pops (->> (d/q gossip/perceived-popularity-q
+                                         db (or pov mind) mind)
+                                    (sort-by second >))
+                          maxpop (second (first pops))
+                          mostpop (->> pops
+                                       (take-while #(= maxpop (second %)))
+                                       (map first))]
+                      (if (>= maxpop 2)
+                        [:p
+                         (str/join " and " (map name mostpop))
+                         (if (> (count mostpop) 1) " are " " is ")
+                         "most popular."]
+                        [:p.small
+                         "I don't know who is most popular."]))]))]
                [:div.panel-footer
                 (let [dto (d/q gossip/indebted-to-q db mind)]
                   ;; how popular am i really
@@ -287,7 +321,7 @@
        [:div.row
         [:div.col-lg-12 ;.col-md-4.col-md-offset-4
          [:button.btn.btn-primary.btn-block
-          {:on-click (fn [e]
+          {:on-click (fn [_]
                        (let [ans (gossip/random-turn db)]
                          (swap! app-state assoc
                                 :encounter ans)))
@@ -298,7 +332,7 @@
        [:div.row
         [:div.col-lg-12 ;.col-md-4.col-md-offset-4
          [:button.btn.btn-success.btn-block
-          {:on-click (fn [e]
+          {:on-click (fn [_]
                        (if-let [enc (:encounter @app-state)]
                          (swap! app-state assoc
                                 :db (:db enc)
@@ -308,7 +342,11 @@
           ]]])
      (when-let [enc (:encounter @app-state)]
        (let [ini (name (:initiator enc))
-             par (name (:partner enc))]
+             par (name (:partner enc))
+             ini-ava (:person/avatar
+                      (d/pull db '[*] [:person/id (:initiator enc)]))
+             par-ava (:person/avatar
+                      (d/pull db '[*] [:person/id (:partner enc)]))]
          [:div
           [:div ;.col-md-4
            [:p.lead
@@ -317,8 +355,12 @@
             {:style {:float "left"
                      :padding "1em"
                      :margin "0 1em 1em 0"
-                     :border "1px solid black"}}
-            [:h2.text-center ini]
+                     :background "#eee"
+                     :border "1px solid #ddd"
+                     :border-radius "33%"}}
+            [:div.text-center {:style {:font-size "5em"}}
+             ini-ava]
+            [:h4.text-center ini]
             ]
            (turn-part-pane (:fwd-part enc)
                            (:fwd-thoughts enc)
@@ -327,8 +369,12 @@
             {:style {:float "right"
                      :padding "1em"
                      :margin "0 0 1em 1em"
-                     :border "1px solid black"}}
-            [:h2.text-center par]
+                     :background "#eee"
+                     :border "1px solid #ddd"
+                     :border-radius "33%"}}
+            [:div.text-center {:style {:font-size "5em"}}
+             par-ava]
+            [:h4.text-center par]
             ]
            (turn-part-pane (:back-part enc)
                            (:back-thoughts enc)
