@@ -132,16 +132,18 @@
         belief-li (fn [mind belief]
                     (let [b-mind (:belief/mind belief)
                           b-person (:belief/person belief) ; either pov or mind
-                          subj (:relation/subject belief)
+                          subj (:belief/subject belief)
                           ;; wait, are we checking the feeling or checking the belief?
                           check? (if (= b-person b-mind subj)
                                    false true)]
                       [:li
-                      {:class (case (:relation/feeling belief)
-                                :like "bg-warning" ;; yellow
-                                :anger "bg-danger" ;; red
-                                :fear "bg-info" ;; blue
-                                )}
+                       {:class (if (:missing? belief)
+                                 "text-muted"
+                                 (case (:belief/feeling belief)
+                                   :like "bg-warning" ;; yellow
+                                   :anger "bg-danger" ;; red
+                                   :fear "bg-info" ;; blue
+                                   ))}
                        [(if (:missing? belief) :del :span)
                         (gossip/phrase-belief db belief (:belief/mind belief) nil)]]))]
     [:div
@@ -153,8 +155,7 @@
            {:on-click
             (fn [e]
               (swap! app-state assoc :current-pov nil))}
-           "Clear"]
-          " to show true feelings."]
+           "Show true feelings"]]
          [:p.text-muted
           "Select one person to show what they know:"])]]
      (into [:div.row]
@@ -171,7 +172,10 @@
                      :on-click
                      (fn [e]
                        (swap! app-state assoc :current-pov mind))}
-                    (name mind)])]]
+                    (name mind)])
+                 (if (and pov (not= mind pov))
+                   [:small (str " according to " (name pov))])]
+                ]
                [:div.panel-body
                 (let [knowl (d/q gossip/my-knowledge-of-their-beliefs-q
                                  db (or pov mind) mind)
@@ -181,18 +185,18 @@
                                 (let [substance
                                       (fn [b]
                                         (select-keys b [:belief/mind
-                                                        :relation/subject
-                                                        :relation/object
-                                                        :relation/feeling]))
+                                                        :belief/subject
+                                                        :belief/object
+                                                        :belief/feeling]))
                                       knowl* (set (map substance knowl))]
                                   (remove #(contains? knowl* (substance %))
                                           (d/q gossip/my-beliefs-q db mind))))
                       by-subj (->> knowl
                                    (concat (map #(assoc % :missing? true)
                                                 missing))
-                                   (sort-by (juxt :relation/subject
-                                                  :relation/object))
-                                   (group-by :relation/subject))]
+                                   (sort-by (juxt :belief/subject
+                                                  :belief/object))
+                                   (group-by :belief/subject))]
                   [:div
                    (if-let [bs (get by-subj mind)]
                      (into [:ul.list-unstyled]
@@ -208,7 +212,14 @@
                                   belief bs]
                               (belief-li mind belief)))]
                      [:p.small
-                      "I don't know about others."])])]]
+                      "I don't know others' feelings."])])]
+               [:div.panel-footer
+                (let [pops (d/q gossip/perceived-popularity-q
+                                db (or pov mind) mind)]
+                  (str (sort > pops))
+                  ;; who is most popular
+                  ;; who am i indebted to
+                  )]]
               ]))]))
 
 (defn turn-part-pane
@@ -244,7 +255,7 @@
      (when (and (>= (count people) 2)
                 (not (:encounter @app-state)))
        [:div.row
-        [:div.col-md-4.col-md-offset-4
+        [:div.col-lg-12 ;.col-md-4.col-md-offset-4
          [:button.btn.btn-primary.btn-block
           {:on-click (fn [e]
                        (let [ans (gossip/random-turn db)]
@@ -255,7 +266,7 @@
           ]]])
      (when (:encounter @app-state)
        [:div.row
-        [:div.col-md-4.col-md-offset-4
+        [:div.col-lg-12 ;.col-md-4.col-md-offset-4
          [:button.btn.btn-success.btn-block
           {:on-click (fn [e]
                        (if-let [enc (:encounter @app-state)]

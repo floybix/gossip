@@ -29,15 +29,15 @@
    :belief/source {:db/doc "Who did I learn this from."
                    :db/cardinality :db.cardinality/one}
    :belief/original {:db/doc "Who was the original source."
-                   :db/cardinality :db.cardinality/one}
-   :belief/phrase {:db/doc "An english phrase expressing this belief/feeling."
-                    :db/cardinality :db.cardinality/one}
-   :relation/subject {:db/doc "Who feels the feeling, eg the angry one."
-                      :db/cardinality :db.cardinality/one}
-   :relation/object {:db/doc "Who is the feeling felt for, eg the one angry with."
                      :db/cardinality :db.cardinality/one}
-   :relation/feeling {:db/doc "What is the feeling, eg anger."
-                      :db/cardinality :db.cardinality/one}
+   :belief/phrase {:db/doc "An english phrase expressing this belief/feeling."
+                   :db/cardinality :db.cardinality/one}
+   :belief/subject {:db/doc "Who feels the feeling, eg the angry one."
+                    :db/cardinality :db.cardinality/one}
+   :belief/object {:db/doc "Who is the feeling felt for, eg the one angry with."
+                   :db/cardinality :db.cardinality/one}
+   :belief/feeling {:db/doc "What is the feeling, eg anger."
+                    :db/cardinality :db.cardinality/one}
    })
 
 (defn people-datoms
@@ -52,9 +52,9 @@
   '[[(feels-for ?e ?person ?mind ?subject ?object ?feeling)
      [?e :belief/person ?person]
      [?e :belief/mind ?mind]
-     [?e :relation/subject ?subject]
-     [?e :relation/object ?object]
-     [?e :relation/feeling ?feeling]
+     [?e :belief/subject ?subject]
+     [?e :belief/object ?object]
+     [?e :belief/feeling ?feeling]
      ]
     ])
 
@@ -66,7 +66,7 @@
     :where
     [?e :belief/person ?person]
     [?e :belief/mind ?person]
-    [?e :relation/feeling]
+    [?e :belief/feeling]
     ])
 
 (def my-knowledge-of-their-beliefs-q
@@ -77,7 +77,7 @@
     :where
     [?e :belief/person ?person]
     [?e :belief/mind ?mind]
-    [?e :relation/feeling]
+    [?e :belief/feeling]
     ])
 
 (def my-feelings-q
@@ -89,10 +89,25 @@
     [?e :belief/person ?person]
     [?e :belief/mind ?person]
     [?e :belief/subject ?person]
-    [?e :relation/feeling]
+    [?e :belief/feeling]
     ])
 
-(defn existing-relation
+(def perceived-popularity-q
+  "Query to find how popular each character is (how many people like
+  them), in the mind of a given character, as far as the query person
+  knows. The two parameters are person id and whose mind they are
+  considering."
+  '[:find ?obj (count ?subj)
+    :in $ ?person ?mind
+    :where
+    [?e :belief/person ?person]
+    [?e :belief/mind ?mind]
+    [?e :belief/subject ?subj]
+    [?e :belief/object ?obj]
+    [?e :belief/feeling :like]]
+  )
+
+(defn existing-belief
   [db belief]
   (d/q '[:find (pull ?e [*]) .
          :in $ [?person ?mind ?x ?y] %
@@ -101,8 +116,8 @@
        db
        (map belief [:belief/person
                     :belief/mind
-                    :relation/subject
-                    :relation/object])
+                    :belief/subject
+                    :belief/object])
        dbrules))
 
 (defn find-news
@@ -130,18 +145,18 @@
             (let [their (assoc belief
                                :belief/person listener
                                :belief/mind listener)
-                  their-existing-belief (existing-relation db their)]
-              (if (= (:relation/feeling their-existing-belief)
-                     (:relation/feeling belief))
+                  their-existing-belief (existing-belief db their)]
+              (if (= (:belief/feeling their-existing-belief)
+                     (:belief/feeling belief))
                 ;; already known, skip
                 nil
                 ;; got one
                 belief))))
      (remove nil?))))
 
-(defn updatable-relation
+(defn updatable-belief
   [db new-belief]
-  (let [existing (existing-relation db new-belief)]
+  (let [existing (existing-belief db new-belief)]
     (if-let [eid (:db/id existing)]
       (assoc new-belief :db/id eid)
       (dissoc new-belief :db/id))))
@@ -150,12 +165,12 @@
   ([db person mind subject object feeling]
    (let [belief {:belief/person person
                  :belief/mind mind
-                 :relation/subject subject
-                 :relation/object object
-                 :relation/feeling feeling}]
+                 :belief/subject subject
+                 :belief/object object
+                 :belief/feeling feeling}]
      (believe db belief)))
   ([db belief]
-   (d/db-with db [(updatable-relation db belief)])))
+   (d/db-with db [(updatable-belief db belief)])))
 
 (defn replacem
   [s replacements]
@@ -183,7 +198,7 @@
                  db person mind dbrules)]
     (for [[x e1 e2] ans]
       {:db/id e1
-       :relation/feeling :none
+       :belief/feeling :none
        :belief/cause e2
        :belief/phrase
        (replacem "Huh? You mean FOO is afraid of me?? Well I shouldn't be afraid of them any more!"
@@ -198,15 +213,15 @@
                    ]
                  db person mind dbrules)]
     (for [[x e1] ans
-          :let [relation {:belief/person person
-                          :belief/mind mind
-                          :relation/subject mind
-                          :relation/object x}
-                existing (existing-relation db relation)]
-          :when (not= :like (:relation/feeling existing))]
-      (assoc relation
+          :let [belief {:belief/person person
+                        :belief/mind mind
+                        :belief/subject mind
+                        :belief/object x}
+                existing (existing-belief db belief)]
+          :when (not= :like (:belief/feeling existing))]
+      (assoc belief
              :db/id (:db/id existing) ; or -1
-             :relation/feeling :like
+             :belief/feeling :like
              :belief/cause e1
              :belief/phrase
              (replacem "FOO likes me! We can be friends."
@@ -221,16 +236,16 @@
                    ]
                  db person mind dbrules)]
     (for [[x e1] ans
-          :let [relation {:belief/person person
-                          :belief/mind mind
-                          :relation/subject mind
-                          :relation/object x}
-                existing (existing-relation db relation)]
-          :when (not (contains? #{:anger :fear} (:relation/feeling existing)))
+          :let [belief {:belief/person person
+                        :belief/mind mind
+                        :belief/subject mind
+                        :belief/object x}
+                existing (existing-belief db belief)]
+          :when (not (contains? #{:anger :fear} (:belief/feeling existing)))
           :let [new-feeling (rand-nth [:anger :fear])]]
-      (assoc relation
+      (assoc belief
              :db/id (:db/id existing)
-             :relation/feeling new-feeling
+             :belief/feeling new-feeling
              :belief/cause e1
              :belief/phrase
              (cond
@@ -252,16 +267,16 @@
                    ]
                  db person mind dbrules)]
     (for [[x other e2] ans
-          :let [relation {:belief/person person
-                          :belief/mind mind
-                          :relation/subject mind
-                          :relation/object other}
-                existing (existing-relation db relation)]
-          :when (not (contains? #{:anger :like} (:relation/feeling existing)))
+          :let [belief {:belief/person person
+                        :belief/mind mind
+                        :belief/subject mind
+                        :belief/object other}
+                existing (existing-belief db belief)]
+          :when (not (contains? #{:anger :like} (:belief/feeling existing)))
           :let [new-feeling (rand-nth [:anger :like])]]
-      (assoc relation
+      (assoc belief
              :db/id (:db/id existing)
-             :relation/feeling new-feeling
+             :belief/feeling new-feeling
              :belief/cause e2
              :belief/phrase
              (cond
@@ -347,9 +362,9 @@
 
 (defn phrase-belief
   [db belief speaker listener]
-  (let [subj (:relation/subject belief)
-        obj (:relation/object belief)
-        feel (:relation/feeling belief)
+  (let [subj (:belief/subject belief)
+        obj (:belief/object belief)
+        feel (:belief/feeling belief)
         my-feeling? (= subj speaker)
         your-feeling? (= subj listener)
         about-me? (= obj speaker)
@@ -397,7 +412,7 @@
                       ;; not my own thought; I heard it from someone
                       (if-let [source (:belief/source belief)]
                         (cond
-                          (= source (:relation/subject belief))
+                          (= source (:belief/subject belief))
                           (replacem "FOO told me HIM/HERself."
                                     {"FOO" (name source)
                                      "HIM/HER" (him-her db source)})
@@ -429,9 +444,9 @@
   listener's mind, and prioritise beliefs that (we think) would change
   their mind - particularly if would make me the most popular."
   [me belief]
-  (let [subj (:relation/subject belief)
-        obj (:relation/object belief)
-        feeling (:relation/feeling belief)]
+  (let [subj (:belief/subject belief)
+        obj (:belief/object belief)
+        feeling (:belief/feeling belief)]
     (match [subj obj feeling]
            ;; i am liked
            [_ me :like] 1
@@ -461,7 +476,7 @@
             :you [other listener :anger]
             :them (let [other2 (rand-nth (remove #(= % other) others))]
                     [other other2 :fear])))))
-     (map #(zipmap [:relation/subject :relation/object :relation/feeling] %)))))
+     (map #(zipmap [:belief/subject :belief/object :belief/feeling] %)))))
 
 (defn indebted
   [db from to]
@@ -513,7 +528,7 @@
   "
   [db speaker listener belief]
   (let [belief (assoc belief :source speaker) ;; TODO: cause nil?
-        subj (:relation/subject belief)
+        subj (:belief/subject belief)
         lis-facts {:my-mind (assoc belief
                                    :belief/person listener
                                    :belief/mind listener)
@@ -527,17 +542,17 @@
                                     :belief/person speaker
                                     :belief/mind listener)}
         knew-that? (fn [mind-belief]
-                     (= (:relation/feeling (existing-relation db mind-belief))
-                        (:relation/feeling belief)))
+                     (= (:belief/feeling (existing-belief db mind-belief))
+                        (:belief/feeling belief)))
         ;; TODO: outdated / lies - corrections and responses
         to-apply (concat
                   (when-not (knew-that? (:my-mind lis-facts))
-                    [(updatable-relation db (:my-mind lis-facts))
-                     (updatable-relation db (:subj-mind lis-facts))])
+                    [(updatable-belief db (:my-mind lis-facts))
+                     (updatable-belief db (:subj-mind lis-facts))])
                   (when-not (knew-that? (:spe-mind lis-facts))
-                    [(updatable-relation db (:spe-mind lis-facts))])
+                    [(updatable-belief db (:spe-mind lis-facts))])
                   (when-not (knew-that? (:lis-mind spe-facts))
-                    [(updatable-relation db (:lis-mind spe-facts))]))
+                    [(updatable-belief db (:lis-mind spe-facts))]))
         ]
     {:db (if (seq to-apply) (d/db-with db to-apply) db)
      :news? (not (knew-that? (:my-mind lis-facts)))
@@ -660,11 +675,11 @@ g  Play proceeds as follows:
                                 "LIS" (name partner)
                                 "HIM/HER" (him-her db partner)}))
         fwd-reply (if (contains? #{:anger :fear}
-                                 (:relation/feeling (first partner-thoughts1)))
+                                 (:belief/feeling (first partner-thoughts1)))
                     (rand-nth negative-response-phrases)
                     (rand-nth positive-response-phrases))
         back-reply (if (contains? #{:anger :fear}
-                                  (:relation/feeling (first initiat-thoughts1)))
+                                  (:belief/feeling (first initiat-thoughts1)))
                     (rand-nth negative-response-phrases)
                     (rand-nth positive-response-phrases))
 
