@@ -109,7 +109,8 @@
                                     (:belief/feeling (first back-thoughts)))
                        (rand-nth negative-response-phrases)
                        (rand-nth positive-response-phrases)))]
-    {:meet-phrase meet-str
-     :fwd-reply fwd-reply
-     :back-reply back-reply}
+    (assoc turn
+           :meet-phrase meet-str
+           :fwd-reply fwd-reply
+           :back-reply back-reply)
     ))

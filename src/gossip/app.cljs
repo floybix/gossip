@@ -311,6 +311,16 @@
              reply
              "You owe me, ok?")
            \")]
+     [:div.bg-success
+      [:h5 "DATA"]
+      [:ul
+       [:li (str "gossip " (:gossip part))]
+       [:li (str "existing " (:existing part))]
+       [:li (str "exposed-lie? " (:exposed-lie? part))]
+       [:li (str "reaction " (:reaction part))]
+       [:li (str "back-gossip " (:back-gossip part))]
+       [:li (str "minor-news " (:minor-news part))]
+       ]]
      ]))
 
 (defn encounter-pane
@@ -324,9 +334,9 @@
         [:div.col-lg-12 ;.col-md-4.col-md-offset-4
          [:button.btn.btn-primary.btn-block
           {:on-click (fn [_]
-                       (let [ans (gossip/random-turn db)]
+                       (let [turn (gossip/random-turn db)]
                          (swap! app-state assoc
-                                :encounter ans)))
+                                :encounter (narr/narrate-turn turn))))
            }
           "New encounter"
           ]]])
@@ -396,16 +406,12 @@
                (->> thoughts
                     (map :belief/phrase)
                     (str/join \newline))]])
-           [:p (str (:gossip (:fwd-part enc)))]
-           [:p (str (:gossip (:back-part enc)))]
-           [:p (str (:fwd-thoughts enc))]
-           [:p (str (:back-thoughts enc))]
+           (let [part (:fwd-part enc)]
+             )
+           [:p (str "Fwd thoughts: " (:fwd-thoughts enc))]
+           [:p (str "Back thoughts: " (:back-thoughts enc))]
            [:p (str (:partner-thoughts enc))]
            [:p (str (:initiator-thoughts enc))]
-           [:p "Forward part minor news: "
-            (str (:minor-news (:fwd-part enc)))]
-           [:p "Back part minor news: "
-            (str (:minor-news (:back-part enc)))]
            ]
           ]))
 
