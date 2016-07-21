@@ -9,9 +9,9 @@
             #?(:cljs [goog.string.format])))
 
 (def meeting-phrases
-  ["At a party that night, SPE walks over to LIS and tells HIM/HER:"
-   "The next day, SPE sees LIS at the park and tells HIM/HER:"
-   "In maths class, SPE passes a note to LIS which says:"])
+  ["At a party that night, SPE walks up to LIS and talks to HIM/HER."
+   "The next day, SPE sees LIS at the park."
+   "In maths class, SPE passes a note to LIS."])
 
 (def message-prefixes
   ["Did you know?"
@@ -19,7 +19,7 @@
    "OMG I can't believe it!"])
 
 (def positive-response-phrases
-  ["That's cool."
+  ["Ha ha."
    "Oh wow."])
 
 (def negative-response-phrases
@@ -69,7 +69,9 @@
   [db speaker listener belief]
   (let [;; TODO: what if belief subject is the listener? a confrontation.
         message-prefix (rand-nth message-prefixes)
-        message-str (phrase-belief db belief speaker listener)
+        message-str (str (if (= listener (:belief/subject belief))
+                           "I heard " "")
+                         (phrase-belief db belief speaker listener))
         explain-str (if-let [cause-e (:belief/cause belief)]
                       ;; look up reason
                       (let [cause (d/pull db '[*] (:db/id cause-e))]

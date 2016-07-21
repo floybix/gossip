@@ -2,7 +2,7 @@
   (:require [reagent.core :as reagent :refer [atom]]
             [goog.dom.forms :as forms]
             [datascript.core :as d]
-            [gossip.core :as gossip]
+            [gossip.core :as gossip :refer [he-she him-her]]
             [gossip.narrative :as narr]
             [clojure.set :as set]
             [clojure.string :as str]))
@@ -206,7 +206,8 @@
                  [:a
                   {:on-click
                    (fn [_]
-                     (swap! ui-state assoc :choosing-avatar mind))}
+                     (swap! ui-state update :choosing-avatar
+                            #(if (= % mind) nil mind)))}
                   avatar]]
                 [:h4.panel-title
                  (if (= mind pov)
@@ -297,19 +298,41 @@
 
 (defn turn-part-pane
   [part thoughts reply]
-  (let [{:keys [speaker listener gossip minor-news]} part
+  (let [{:keys [speaker listener gossip existing reaction exposed-lie?]} part
+        ;back-gossip minor-news
         db (:db-before part)
         spe (name speaker)
         lis (name listener)]
     [:div
+     ;; back-gossip if any - i.e. correcting outdated beliefs
+     (when-let [backgoss (:back-gossip part)]
+       (into
+        [:div]
+        (for [[attempt corrected] backgoss]
+          [:div
+           [:p
+            [:b (str spe ": ")]
+            (str \"
+                 (narr/phrase-gossip db speaker listener attempt)
+                 \")]
+           [:p
+            [:b (str lis ": ")]
+            (str \"
+                 "No, that's wrong. "
+                 (narr/phrase-gossip db listener speaker corrected)
+                 \")]]
+          )))
+     ;; the valid gossip if any (or the belief which was exposed as a lie)
+     ;; first, prefix when owing:
      (when (gossip/indebted db speaker listener)
        [:p
         [:i
-         (str spe " knows " (gossip/he-she db speaker) " owes " lis
+         (str spe " knows " (he-she db speaker) " owes " lis
               " some goss. "
-              (if (:belief/lie? gossip)
-                (str "In desperation, " (gossip/he-she db speaker) " makes something up:")
-                (str "Luckily, " (gossip/he-she db speaker) " has some:")))]])
+              (if (= speaker (:belief/fabricator gossip))
+                (str "In desperation, " (he-she db speaker) " makes something up:")
+                (str "Luckily, " (he-she db speaker) " has some:")))]])
+     ;; valid gossip, if any
      [:p
       [:b (str spe ": ")]
       (str \"
@@ -317,6 +340,32 @@
              (narr/phrase-gossip db speaker listener gossip)
              "I got nothing, sorry.")
            \")]
+     ;; lie correction and reaction, if any
+     (if exposed-lie?
+       (let [fabricator (:belief/object reaction)
+             ]
+         [:p
+          [:b (str lis ": ")]
+          (str \"
+               "That's a lie!"
+               (if (= :like (:belief/feeling gossip))
+                 (str " I don't like " (him-her db (:belief/object gossip)) ".")
+                 (when existing
+                   (str " " (narr/phrase-belief db existing listener speaker))))
+               " I'm so angry with " (name fabricator)
+               " for spreading lies about me!"
+               \")])
+       ;; not an exposed lie.
+       ;; note existing belief that was replaced, if any
+       (when existing
+         [:p
+          [:b (str lis ": ")]
+          (str \"
+               "Really? Oh. I thought "
+               (narr/phrase-belief db existing listener speaker)
+               \")])
+       )
+     ;; listener's thoughts after the interaction
      (when (seq thoughts)
        [:p
         [:i
