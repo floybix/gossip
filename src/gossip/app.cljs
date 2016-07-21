@@ -12,11 +12,31 @@
 (defonce app-state
   (atom {:db (d/empty-db gossip/db-schema)
          :encounter nil
+         }))
+
+(defonce ui-state
+  (atom {:current-pov nil
+         :choosing-avatar nil
          :adding-person {:name ""
                          :male? false}
          :adding-belief {:subject nil
                          :object nil
                          :feeling :like}}))
+
+(defonce undo-buffer
+  (atom ()))
+
+(defonce redo-buffer
+  (atom ()))
+
+(defn swap-advance!
+  "ref = app-state"
+  [ref f & more]
+  ;; record state for undo
+  (swap! undo-buffer conj @ref)
+  (when (seq @redo-buffer)
+    (reset! redo-buffer ()))
+  (apply swap! ref f more))
 
 (def avatars
   (let [humans ["👦" "👧" "👨" "👩" "👱" "👲" "👳" "👴" "👵" "👶" "👸" "🙍" "🙎" "💁" "🙋" "💂" "🕵" "🎅" "👼" "👷" "👮" "👰" "🙇"]
@@ -30,8 +50,8 @@
                  others))))
 
 (defn add-person-pane
-  [app-state]
-  (let [person (:adding-person @app-state)]
+  [app-state ui-state]
+  (let [person (:adding-person @ui-state)]
     [:div.form-inline.well
      [:div.form-group
       ;; name
@@ -42,7 +62,7 @@
         :placeholder "Name"
         :on-change (fn [e]
                      (let [s (-> e .-target forms/getValue)]
-                       (swap! app-state assoc-in
+                       (swap! ui-state assoc-in
                               [:adding-person :name]
                               s)))}]]
      ;; gender
@@ -52,7 +72,7 @@
         {:type :checkbox
          :checked (if (:male? person) true)
          :on-change (fn [_]
-                      (swap! app-state update-in
+                      (swap! ui-state update-in
                              [:adding-person :male?]
                              not))}]
        "male"]]
@@ -65,17 +85,17 @@
                gender (if (:male? person)
                         :male :female)
                avatar (if (:male? person) (first avatars) (second avatars))]
-           (swap! app-state update :db
-                  d/db-with [{:person/id id
-                              :person/gender gender
-                              :person/avatar avatar}])
-           (swap! app-state assoc-in [:adding-person :name] "")))
+           (swap-advance! app-state update :db
+                          d/db-with [{:person/id id
+                                      :person/gender gender
+                                      :person/avatar avatar}])
+           (swap! ui-state assoc-in [:adding-person :name] "")))
        :disabled (when (str/blank? (:name person)) "disabled")}
       "Add person"]]))
 
 (defn add-belief-pane
-  [app-state]
-  (let [belief (:adding-belief @app-state)
+  [app-state ui-state]
+  (let [belief (:adding-belief @ui-state)
         db (:db @app-state)
         people (gossip/all-people db)]
     [:div.form-inline.well
@@ -84,7 +104,7 @@
       [:select.form-control
        {:on-change (fn [e]
                      (let [s (-> e .-target forms/getValue)]
-                       (swap! app-state assoc-in
+                       (swap! ui-state assoc-in
                               [:adding-belief :subject]
                               (when (seq s) (keyword s)))))}
        (for [person (cons "" people)]
@@ -98,7 +118,7 @@
       [:select.form-control
        {:on-change (fn [e]
                      (let [s (-> e .-target forms/getValue)]
-                       (swap! app-state assoc-in
+                       (swap! ui-state assoc-in
                               [:adding-belief :feeling]
                               (keyword s))))}
        (for [feeling [:like :anger :fear]]
@@ -115,7 +135,7 @@
       [:select.form-control
        {:on-change (fn [e]
                      (let [s (-> e .-target forms/getValue)]
-                       (swap! app-state assoc-in
+                       (swap! ui-state assoc-in
                               [:adding-belief :object]
                               (when (seq s) (keyword s)))))}
        (for [person (cons "" people)]
@@ -130,18 +150,18 @@
       {:on-click
        (fn [_]
          (let [{:keys [subject object feeling]} belief]
-           (swap! app-state update :db
-                  gossip/believe subject subject subject object feeling)
-           (swap! app-state assoc-in [:adding-belief :object] nil)))
+           (swap-advance! app-state update :db
+                          gossip/believe subject subject subject object feeling)
+           (swap! ui-state assoc-in [:adding-belief :object] nil)))
        :disabled (when-not (and (:subject belief)
                                 (:object belief))
                    "disabled")}
       "Add feeling"]]))
 
 (defn status-pane
-  [app-state]
+  [app-state ui-state]
   (let [db (:db @app-state)
-        pov (:current-pov @app-state)
+        pov (:current-pov @ui-state)
         people (gossip/all-people db)
         belief-li (fn [mind belief]
                     (let [b-mind (:belief/mind belief)
@@ -170,7 +190,7 @@
           [:button.btn-primary.btn-xs
            {:on-click
             (fn [_]
-              (swap! app-state assoc :current-pov nil))}
+              (swap! ui-state assoc :current-pov nil))}
            "Show true feelings"]]
          [:p.text-muted
           "Click a name to show what they know:"])]]
@@ -186,7 +206,7 @@
                  [:a
                   {:on-click
                    (fn [_]
-                     (swap! app-state assoc :choosing-avatar mind))}
+                     (swap! ui-state assoc :choosing-avatar mind))}
                   avatar]]
                 [:h4.panel-title
                  (if (= mind pov)
@@ -195,13 +215,13 @@
                     {:href "#"
                      :on-click
                      (fn [_]
-                       (swap! app-state assoc :current-pov mind))}
+                       (swap! ui-state assoc :current-pov mind))}
                     (name mind)])
                  (if (and pov (not= mind pov))
                    [:small (str " according to " (name pov))])]
                 ]
                [:div.panel-body
-                (if (= mind (:choosing-avatar @app-state))
+                (if (= mind (:choosing-avatar @ui-state))
                   (into
                    [:div
                     [:p.small "Pick an avatar:"]]
@@ -212,7 +232,7 @@
                          (swap! app-state update :db
                                 d/db-with [{:person/id mind
                                             :person/avatar a}])
-                         (swap! app-state
+                         (swap! ui-state
                                 assoc :choosing-avatar nil))}
                       a]))
                   (let [knowl (d/q gossip/my-knowledge-of-their-beliefs-q
@@ -335,8 +355,8 @@
          [:button.btn.btn-primary.btn-block
           {:on-click (fn [_]
                        (let [turn (gossip/random-turn db)]
-                         (swap! app-state assoc
-                                :encounter (narr/narrate-turn turn))))
+                         (swap-advance! app-state assoc
+                                        :encounter (narr/narrate-turn turn))))
            }
           "New encounter"
           ]]])
@@ -346,9 +366,9 @@
          [:button.btn.btn-success.btn-block
           {:on-click (fn [_]
                        (if-let [enc (:encounter @app-state)]
-                         (swap! app-state assoc
-                                :db (:db enc)
-                                :encounter nil)))
+                         (swap-advance! app-state assoc
+                                        :db (:db enc)
+                                        :encounter nil)))
            }
           "Continue"
           ]]])
@@ -430,40 +450,50 @@
       [:li
        [:button.btn.btn-default.navbar-btn
         {:type :button
-         :on-click #()
+         :on-click
+         (fn [_]
+           (let [new-state (peek @undo-buffer)]
+             (swap! undo-buffer pop)
+             (swap! redo-buffer conj @app-state)
+             (reset! app-state new-state)))
          :title "Step backward in time"
-         :disabled "disabled"}
+         :disabled (when (empty? @undo-buffer) "disabled")}
         [:span.glyphicon.glyphicon-step-backward {:aria-hidden "true"}]
         [:span.visible-xs-inline " Step backward"]]]
       ;; step forward
       [:li
        [:button.btn.btn-default.navbar-btn
         {:type :button
-         :on-click #()
+         :on-click
+         (fn [_]
+           (let [new-state (peek @redo-buffer)]
+             (swap! redo-buffer pop)
+             (swap! undo-buffer conj @app-state)
+             (reset! app-state new-state)))
          :title "Step forward in time"
-         :disabled "disabled"}
+         :disabled (when (empty? @redo-buffer) "disabled")}
         [:span.glyphicon.glyphicon-step-forward {:aria-hidden "true"}]
         [:span.visible-xs-inline " Step forward"]]]]]]])
 
 (defn app-pane
-  [app-state]
+  [app-state ui-state]
   [:div
    [navbar app-state]
    [:div.container-fluid
     [:div.row
      [:div.col-lg-6
-      [add-person-pane app-state]]
+      [add-person-pane app-state ui-state]]
      [:div.col-lg-6
-      [add-belief-pane app-state]]]
+      [add-belief-pane app-state ui-state]]]
     [:div.row
      [:div.col-lg-8.col-md-6
-      [status-pane app-state]]
+      [status-pane app-state ui-state]]
      [:div.col-lg-4.col-md-6
       [encounter-pane app-state]]]
     ]
    ])
 
-(reagent/render-component [app-pane app-state]
+(reagent/render-component [app-pane app-state ui-state]
                           (. js/document (getElementById "app")))
 
 
