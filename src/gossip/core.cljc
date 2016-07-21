@@ -246,8 +246,9 @@
              :belief/phrase
              (cond
                (= :anger new-feeling)
-               (replacem "Well if FOO is angry with me then I'm angry too."
-                         {"FOO" (name x)})
+               (replacem "Well if FOO is angry with me then I'm angry with HIM/HER."
+                         {"FOO" (name x)
+                          "HIM/HER" (him-her db x)})
                (= :fear new-feeling)
                (replacem "Uh-oh, I'd better keep away from FOO."
                          {"FOO" (name x)}))))))
@@ -478,13 +479,16 @@
         ;; also - knowledge of the lie should pass back to speaker
         ;; would need a global lie id
         ;; ohhhh, we shouldn't update beliefs at all; we should retractentity
-        ;; that would help cause refs as well (although retract = delete in datascript)
+        ;; that would help cause refs as well (retract deletes refs - ok)
         exposed-lie? (and correction? (:belief/lie? belief))]
     (if correction?
-      (let [fixed (goss-result db listener speaker existing)
+      (let [correction (or existing
+                           (assoc lis-fact
+                                  :belief/feeling :none))
+            fixed (goss-result db listener speaker correction)
             db (:db fixed)]
         (if exposed-lie?
-         (let [from (:belief/fabricator belief) ;; or direct source?
+         (let [from (:belief/fabricator belief) ;; or direct (:belief/source spe-belief)
                angry {:belief/person listener
                       :belief/mind listener
                       :belief/subject listener
@@ -523,7 +527,8 @@
                       [(when-not secret-lie?
                          (assoc belief :belief/person listener :belief/mind listener))
                        (when-not secret-lie?
-                         (assoc belief :belief/person listener :belief/mind subj))
+                         (when (and (not= subj speaker) (not= subj listener))
+                           (assoc belief :belief/person listener :belief/mind subj)))
                        (assoc belief :belief/person listener :belief/mind speaker)
                        (assoc belief :belief/person speaker :belief/mind listener)
                        ]
