@@ -144,12 +144,21 @@
                 belief))))
      (remove nil?))))
 
-(defn updatable-belief
-  [db new-belief]
-  (let [existing (existing-belief db new-belief)]
-    (if-let [eid (:db/id existing)]
-      (assoc new-belief :db/id eid)
-      (dissoc new-belief :db/id))))
+(defn replacement-beliefs
+  [db new-beliefs]
+  (->> new-beliefs
+       (mapcat (fn [belief]
+                 (let [existing (existing-belief db belief)]
+                   (if-let [eid (:db/id existing)]
+                     (if (= (:belief/feeling existing)
+                            (:belief/feeling belief))
+                       ;; no change necessary!
+                       []
+                       ;; need new belief; retract the old belief first.
+                       [[:db.fn/retractEntity eid]
+                        (dissoc belief :db/id)])
+                     ;; no existing record
+                     [(dissoc belief :db/id)]))))))
 
 (defn believe
   ([db person mind subject object feeling]
@@ -160,7 +169,7 @@
                  :belief/feeling feeling}]
      (believe db belief)))
   ([db belief]
-   (d/db-with db [(updatable-belief db belief)])))
+   (d/db-with db (replacement-beliefs db [belief]))))
 
 (defn replacem
   [s replacements]
@@ -193,7 +202,10 @@
                    ]
                  db person mind dbrules)]
     (for [[x e1 e2] ans]
-      {:db/id e1
+      {:belief/person person
+       :belief/mind mind
+       :belief/subject mind
+       :belief/object x
        :belief/feeling :none
        :belief/cause e2
        :belief/phrase
@@ -216,7 +228,6 @@
                 existing (existing-belief db belief)]
           :when (not= :like (:belief/feeling existing))]
       (assoc belief
-             :db/id (:db/id existing) ; or -1
              :belief/feeling :like
              :belief/cause e1
              :belief/phrase
@@ -240,7 +251,6 @@
           :when (not (contains? #{:anger :fear} (:belief/feeling existing)))
           :let [new-feeling (rand-nth [:anger :fear])]]
       (assoc belief
-             :db/id (:db/id existing)
              :belief/feeling new-feeling
              :belief/cause e1
              :belief/phrase
@@ -272,7 +282,6 @@
           :when (not (contains? #{:anger :like} (:belief/feeling existing)))
           :let [new-feeling (rand-nth [:anger :like])]]
       (assoc belief
-             :db/id (:db/id existing)
              :belief/feeling new-feeling
              :belief/cause e2
              :belief/phrase
@@ -335,7 +344,7 @@
   [db person]
   (let [thoughts (derive-beliefs db person person)]
     [(if (seq thoughts)
-       (d/db-with db thoughts)
+       (d/db-with db (replacement-beliefs db thoughts))
        db)
      thoughts]))
 
@@ -382,8 +391,8 @@
       (fn []
         (let [other (rand-nth others)
               poss (if (> (count others) 1)
-                     [:them :you :me]
-                     [:you :me])]
+                     [:them :you :me :me]
+                     [:you :me :me])]
           (case (rand-nth poss)
             :me [other speaker :like]
             :you [other listener :anger]
@@ -460,7 +469,7 @@
   :minor-news?
   "
   [db speaker listener belief]
-  (let [spe-belief belief
+  (let [orig-source (:belief/source belief)
         belief (assoc belief :belief/source speaker) ;; TODO: cause nil?
         subj (:belief/subject belief)
         lis-fact (assoc belief
@@ -477,18 +486,18 @@
         correction? (and (= subj listener) news?)
         ;; TODO: exposed lie does not count as gossip if we already know about it
         ;; also - knowledge of the lie should pass back to speaker
-        ;; would need a global lie id
-        ;; ohhhh, we shouldn't update beliefs at all; we should retractentity
-        ;; that would help cause refs as well (retract deletes refs - ok)
         exposed-lie? (and correction? (:belief/lie? belief))]
     (if correction?
       (let [correction (or existing
-                           (assoc lis-fact
-                                  :belief/feeling :none))
+                           {:belief/person listener
+                            :belief/mind listener
+                            :belief/subject (:belief/subject belief)
+                            :belief/object (:belief/object belief)
+                            :belief/feeling :none})
             fixed (goss-result db listener speaker correction)
             db (:db fixed)]
         (if exposed-lie?
-         (let [from (:belief/fabricator belief) ;; or direct (:belief/source spe-belief)
+         (let [from orig-source ; or (:belief/fabricator belief)
                angry {:belief/person listener
                       :belief/mind listener
                       :belief/subject listener
@@ -508,10 +517,9 @@
                to-apply (for [belief (if waslike? [angry nolike] [angry])
                               person [speaker listener]
                               mind [speaker listener]]
-                          (->> (assoc belief :belief/person person :belief/mind mind)
-                               (updatable-belief db)))
+                          (assoc belief :belief/person person :belief/mind mind))
                ]
-           {:db (d/db-with db to-apply)
+           {:db (d/db-with db (replacement-beliefs db to-apply))
             :existing existing
             :wrong? true
             :exposed-lie? true
@@ -532,9 +540,8 @@
                        (assoc belief :belief/person listener :belief/mind speaker)
                        (assoc belief :belief/person speaker :belief/mind listener)
                        ]
-                      (remove nil?)
-                      (mapv #(updatable-belief db %)))]
-        {:db (d/db-with db to-apply)
+                      (remove nil?))]
+        {:db (d/db-with db (replacement-beliefs db to-apply))
          :existing existing
          :news? news?
          :minor-news? (not (knew-that? (assoc lis-fact :belief/mind speaker)))}))
@@ -656,7 +663,8 @@
         fwd-part (turn-part db initiator partner)
         db (:db fwd-part)
         ;; if had back-gossip, clear partner debt before next part
-        db (if (seq (:back-gossip fwd-part))
+        db (if (or (seq (:back-gossip fwd-part))
+                   (:exposed-lie? fwd-part))
              (update-debt db partner initiator true)
              db)
         ;; partner speaks (think first)
