@@ -46,21 +46,21 @@
         :like (format "I like %s." obj-name)
         :anger (format "I'm angry with %s." obj-name)
         :fear (format "I'm afraid of %s." obj-name)
-        (format "I'm %s with %s." feel obj-name))
+        :none (format "I have no issue with %s." obj-name))
       ;; your feeling
       (= subj listener)
       (case feel
         :like (format "you like %s." obj-name)
         :anger (format "you are angry with %s." obj-name)
         :fear (format "you are afraid of %s." obj-name)
-        (format "you are %s with %s." feel obj-name))
+        :none (format "you have no issue with %s." obj-name))
       ;; someone else's feeling
       :else
       (case feel
         :like (format "%s likes %s." (name subj) obj-name)
         :anger (format "%s is angry with %s." (name subj) obj-name)
         :fear (format "%s is afraid of %s." (name subj) obj-name)
-        (format "%s is %s with %s." (name subj) feel obj-name))
+        :none (format "%s has no issue with %s." (name subj) obj-name))
       )
     ))
 

@@ -12,6 +12,7 @@
 (defonce app-state
   (atom {:db (d/empty-db gossip/db-schema)
          :encounter nil
+         :day 0
          }))
 
 (defonce ui-state
@@ -299,13 +300,12 @@
 (defn turn-part-pane
   [part thoughts reply]
   (let [{:keys [speaker listener gossip existing reaction exposed-lie?]} part
-        ;back-gossip minor-news
         db (:db-before part)
         spe (name speaker)
         lis (name listener)]
     [:div
      ;; back-gossip if any - i.e. correcting outdated beliefs
-     (when-let [backgoss (:back-gossip part)]
+     (when-let [backgoss (seq (:back-gossip part))]
        (into
         [:div]
         (for [[attempt corrected] backgoss]
@@ -326,7 +326,7 @@
         [:i
          (str spe " knows " (he-she db speaker) " owes " lis
               " some goss. "
-              "In desperation, " (he-she db speaker) " lies,")]])
+              "So " (he-she db speaker) " lies,")]])
      ;; valid gossip, if any
      [:p
       [:b (str spe ": ")]
@@ -354,6 +354,31 @@
           (str "Really? Oh. I thought "
                (narr/phrase-belief db existing listener speaker))])
        )
+     [:p
+      [:b (str lis ": ")]
+      (str (if gossip
+             reply
+             "You owe me, ok?"))]
+     ;; minor news, if any - stuff the listener didn't know that speaker knew
+     (when-let [minor (seq (:minor-news part))]
+       [:div
+        [:p
+         [:b (str spe ": ")]
+         (str "Oh and by the way. "
+              (str/join " And "
+                        (map (fn [b]
+                               (str "I know that "
+                                    (narr/phrase-belief db b speaker listener)))
+                             minor)))]
+        [:p
+         [:b (str lis ": ")]
+         (let [embarrased? (some #(and (= (:belief/subject listener))
+                                       (= (:belief/object speaker)))
+                                 minor)]
+           (if embarrased?
+             [:span [:i "Gulp."] " Er, gotta go now, bye!"]
+             "Oh yeah, that."))]
+        ])
      ;; listener's thoughts after the interaction
      (when (seq thoughts)
        [:p
@@ -362,11 +387,6 @@
          (->> thoughts
               (map :belief/phrase)
               (str/join \newline))]])
-     [:p
-      [:b (str lis ": ")]
-      (str (if gossip
-             reply
-             "You owe me, ok?"))]
      [:div.bg-success
       [:h5 "DATA"]
       [:ul
@@ -380,7 +400,7 @@
      ]))
 
 (defn encounter-pane
-  [app-status]
+  [app-state]
   (let [db (:db @app-state)
         people (gossip/all-people db)]
     [:div
@@ -392,7 +412,8 @@
           {:on-click (fn [_]
                        (let [turn (gossip/random-turn db)]
                          (swap-advance! app-state assoc
-                                        :encounter (narr/narrate-turn turn))))
+                                        :encounter (narr/narrate-turn turn)
+                                        :day (inc (:day @app-state 0)))))
            }
           "New encounter"
           ]]])
@@ -509,7 +530,20 @@
          :title "Step forward in time"
          :disabled (when (empty? @redo-buffer) "disabled")}
         [:span.glyphicon.glyphicon-step-forward {:aria-hidden "true"}]
-        [:span.visible-xs-inline " Step forward"]]]]]]])
+        [:span.visible-xs-inline " Step forward"]]]
+      ;; timestep
+      [:li
+       [:p.navbar-text
+        (str " Day " (:day @app-state))]]
+      ]
+     ;; right-aligned items
+     [:ul.nav.navbar-nav.navbar-right
+      ;; dedication
+      [:li
+       [:p.navbar-text "made with "
+        [:small {:style {:margin-right "0.5ex"}} "💛"]
+        " for Zari Andrews."]]]
+     ]]])
 
 (defn app-pane
   [app-state ui-state]
