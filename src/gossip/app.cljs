@@ -182,12 +182,13 @@
               [:div.panel
                {:class (if (= mind pov) "panel-primary" "panel-default")}
                [:div.panel-heading
-                [:h4.panel-title
+                [:h4.panel-title.pull-right
                  [:a
                   {:on-click
                    (fn [_]
                      (swap! app-state assoc :choosing-avatar mind))}
-                  (str avatar " ")]
+                  avatar]]
+                [:h4.panel-title
                  (if (= mind pov)
                    (name mind)
                    [:a
