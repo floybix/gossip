@@ -237,55 +237,55 @@
                                 assoc :choosing-avatar nil))}
                       a]))
                   (let [knowl (d/q gossip/my-knowledge-of-their-beliefs-q
-                                  db (or pov mind) mind)
-                       ;; also look up this mind's actual beliefs
-                       ;; - see what knowledge is missing and tag it
-                       missing (when (and pov (not= pov mind))
-                                 (let [substance
-                                       (fn [b]
-                                         (select-keys b [:belief/mind
-                                                         :belief/subject
-                                                         :belief/object
-                                                         :belief/feeling]))
-                                       knowl* (set (map substance knowl))]
-                                   (remove #(contains? knowl* (substance %))
-                                           (d/q gossip/my-beliefs-q db mind))))
-                       by-subj (->> knowl
-                                    (concat (map #(assoc % :missing? true)
-                                                 missing))
-                                    (sort-by (juxt :belief/subject
-                                                   :belief/object))
-                                    (group-by :belief/subject))]
-                   [:div
-                    (if-let [bs (get by-subj mind)]
-                      (into [:ul.list-unstyled]
-                            (for [belief bs]
-                              (belief-li mind belief)))
-                      [:p.small
-                       "I don't have any feelings."])
-                    (if (seq (dissoc by-subj mind))
-                      [:div
-                       [:h5 "I think:"]
+                                   db (or pov mind) mind)
+                        ;; also look up this mind's actual beliefs
+                        ;; - see what knowledge is missing and tag it
+                        missing (when (and pov (not= pov mind))
+                                  (let [substance
+                                        (fn [b]
+                                          (select-keys b [:belief/mind
+                                                          :belief/subject
+                                                          :belief/object
+                                                          :belief/feeling]))
+                                        knowl* (set (map substance knowl))]
+                                    (remove #(contains? knowl* (substance %))
+                                            (d/q gossip/my-beliefs-q db mind))))
+                        by-subj (->> knowl
+                                     (concat (map #(assoc % :missing? true)
+                                                  missing))
+                                     (sort-by (juxt :belief/subject
+                                                    :belief/object))
+                                     (group-by :belief/subject))]
+                    [:div
+                     (if-let [bs (get by-subj mind)]
                        (into [:ul.list-unstyled]
-                             (for [[subj bs] (dissoc by-subj mind)
-                                   belief bs]
-                               (belief-li mind belief)))]
-                      [:p.small
-                       "I don't know others' feelings."])
-                    (let [pops (->> (d/q gossip/perceived-popularity-q
-                                         db (or pov mind) mind)
-                                    (sort-by second >))
-                          maxpop (second (first pops))
-                          mostpop (->> pops
-                                       (take-while #(= maxpop (second %)))
-                                       (map first))]
-                      (if (>= maxpop 2)
-                        [:p
-                         (str/join " and " (map name mostpop))
-                         (if (> (count mostpop) 1) " are " " is ")
-                         "most popular."]
-                        [:p.small
-                         "I don't know who is most popular."]))]))]
+                             (for [belief bs]
+                               (belief-li mind belief)))
+                       [:p.small
+                        "I don't have any feelings."])
+                     (if (seq (dissoc by-subj mind))
+                       [:div
+                        [:h5 "I think:"]
+                        (into [:ul.list-unstyled]
+                              (for [[subj bs] (dissoc by-subj mind)
+                                    belief bs]
+                                (belief-li mind belief)))]
+                       [:p.small
+                        "I don't know others' feelings."])
+                     (let [pops (->> (d/q gossip/perceived-popularity-q
+                                          db (or pov mind) mind)
+                                     (sort-by second >))
+                           maxpop (second (first pops))
+                           mostpop (->> pops
+                                        (take-while #(= maxpop (second %)))
+                                        (map first))]
+                       (if (>= maxpop 2)
+                         [:p
+                          (str/join " and " (map name mostpop))
+                          (if (> (count mostpop) 1) " are " " is ")
+                          "most popular."]
+                         [:p.small
+                          "I don't know who is most popular."]))]))]
                [:div.panel-footer
                 (let [dto (d/q gossip/indebted-to-q db mind)]
                   ;; how popular am i really
@@ -312,58 +312,47 @@
           [:div
            [:p
             [:b (str spe ": ")]
-            (str \"
-                 (narr/phrase-gossip db speaker listener attempt)
-                 \")]
+            (narr/phrase-gossip db speaker listener attempt)]
            [:p
             [:b (str lis ": ")]
-            (str \"
-                 "No, that's wrong. "
-                 (narr/phrase-gossip db listener speaker corrected)
-                 \")]]
+            (str "No, that's wrong. "
+                 (narr/phrase-gossip db listener speaker corrected))]]
           )))
      ;; the valid gossip if any (or the belief which was exposed as a lie)
      ;; first, prefix when owing:
-     (when (gossip/indebted db speaker listener)
+     (when (and (gossip/indebted db speaker listener)
+                (= speaker (:belief/fabricator gossip)))
        [:p
         [:i
          (str spe " knows " (he-she db speaker) " owes " lis
               " some goss. "
-              (if (= speaker (:belief/fabricator gossip))
-                (str "In desperation, " (he-she db speaker) " makes something up:")
-                (str "Luckily, " (he-she db speaker) " has some:")))]])
+              "In desperation, " (he-she db speaker) " lies,")]])
      ;; valid gossip, if any
      [:p
       [:b (str spe ": ")]
-      (str \"
-           (if gossip
+      (str (if gossip
              (narr/phrase-gossip db speaker listener gossip)
-             "I got nothing, sorry.")
-           \")]
+             "I got nothing, sorry."))]
      ;; lie correction and reaction, if any
      (if exposed-lie?
        (let [fabricator (:belief/object reaction)
              ]
          [:p
           [:b (str lis ": ")]
-          (str \"
-               "That's a lie!"
+          (str "That's a lie!"
                (if (= :like (:belief/feeling gossip))
                  (str " I don't like " (him-her db (:belief/object gossip)) ".")
                  (when existing
                    (str " " (narr/phrase-belief db existing listener speaker))))
                " I'm so angry with " (name fabricator)
-               " for spreading lies about me!"
-               \")])
+               " for spreading lies about me!")])
        ;; not an exposed lie.
        ;; note existing belief that was replaced, if any
        (when existing
          [:p
           [:b (str lis ": ")]
-          (str \"
-               "Really? Oh. I thought "
-               (narr/phrase-belief db existing listener speaker)
-               \")])
+          (str "Really? Oh. I thought "
+               (narr/phrase-belief db existing listener speaker))])
        )
      ;; listener's thoughts after the interaction
      (when (seq thoughts)
@@ -375,11 +364,9 @@
               (str/join \newline))]])
      [:p
       [:b (str lis ": ")]
-      (str \"
-           (if gossip
+      (str (if gossip
              reply
-             "You owe me, ok?")
-           \")]
+             "You owe me, ok?"))]
      [:div.bg-success
       [:h5 "DATA"]
       [:ul
