@@ -3,6 +3,7 @@
             [goog.dom.forms :as forms]
             [datascript.core :as d]
             [gossip.core :as gossip]
+            [gossip.narrative :as narr]
             [clojure.set :as set]
             [clojure.string :as str]))
 
@@ -160,7 +161,7 @@
                                    :fear "bg-info" ;; blue
                                    ))}
                        [(if (:missing? belief) :del :span)
-                        (gossip/phrase-belief db belief (:belief/mind belief) nil)]]))]
+                        (narr/phrase-belief db belief (:belief/mind belief) nil)]]))]
     [:div
      [:div.row
       [:div.col-lg-12
@@ -172,7 +173,7 @@
               (swap! app-state assoc :current-pov nil))}
            "Show true feelings"]]
          [:p.text-muted
-          "Select one person to show what they know:"])]]
+          "Click a name to show what they know:"])]]
      (into [:div.row]
            (for [mind people
                  :let [avatar (:person/avatar
@@ -292,7 +293,7 @@
       [:b (str spe ": ")]
       (str \"
            (if gossip
-             (gossip/phrase-gossip db speaker listener gossip)
+             (narr/phrase-gossip db speaker listener gossip)
              "I got nothing, sorry.")
            \")]
      (when (seq thoughts)

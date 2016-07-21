@@ -25,7 +25,6 @@
    :belief/lie? {:db/doc "True if this is a lie (unbeknownst to the
                           holder). This is stored as a convenience."}
    :belief/fabricator {:db/doc "Who was the original source of a lie."}
-   :belief/phrase {:db/doc "An english phrase expressing this belief/feeling."}
    :belief/subject {:db/doc "Who feels the feeling, eg the angry one."}
    :belief/object {:db/doc "Who is the feeling felt for, eg the one angry with."}
    :belief/feeling {:db/doc "What is the feeling, eg anger."}
@@ -339,88 +338,6 @@
        db)
      thoughts]))
 
-(def meeting-phrases
-  ["At a party that night, SPE walks over to LIS and tells HIM/HER:"
-   "The next day, SPE sees LIS at the park and tells HIM/HER:"
-   "In maths class, SPE passes a note to LIS which says:"])
-
-(def message-prefixes
-  ["Did you know?"
-   "I wanted to tell you,"
-   "OMG I can't believe it!"])
-
-(def positive-response-phrases
-  ["That's cool."
-   "Oh wow."])
-
-(def negative-response-phrases
-  ["That sucks."
-   "Oh man, that's just like them."])
-
-(defn phrase-belief
-  [db belief speaker listener]
-  (let [subj (:belief/subject belief)
-        obj (:belief/object belief)
-        feel (:belief/feeling belief)
-        my-feeling? (= subj speaker)
-        your-feeling? (= subj listener)
-        about-me? (= obj speaker)
-        about-you? (= obj listener)
-        obj-name (cond
-                   (= listener obj) "you"
-                   (= speaker obj) "me"
-                   :else (name obj))]
-    (cond
-      ;; my feeling
-      (= subj speaker) ;; quite different grammar...
-      (case feel
-        :like (format "I like %s." obj-name)
-        :anger (format "I'm angry with %s." obj-name)
-        :fear (format "I'm afraid of %s." obj-name)
-        (format "I'm %s with %s." feel obj-name))
-      ;; your feeling
-      (= subj listener)
-      (case feel
-        :like (format "you like %s." obj-name)
-        :anger (format "you are angry with %s." obj-name)
-        :fear (format "you are afraid of %s." obj-name)
-        (format "you are %s with %s." feel obj-name))
-      ;; someone else's feeling
-      :else
-      (case feel
-        :like (format "%s likes %s." (name subj) obj-name)
-        :anger (format "%s is angry with %s." (name subj) obj-name)
-        :fear (format "%s is afraid of %s." (name subj) obj-name)
-        (format "%s is %s with %s." (name subj) feel obj-name))
-      )
-    ))
-
-(defn phrase-gossip
-  "Returns string"
-  [db speaker listener belief]
-  (let [;; TODO: what if belief subject is the listener? a confrontation.
-        message-prefix (rand-nth message-prefixes)
-        message-str (phrase-belief db belief speaker listener)
-        explain-str (if-let [cause-e (:belief/cause belief)]
-                      ;; look up reason
-                      (let [cause (d/pull db '[*] (:db/id cause-e))]
-                        (str "It all started because "
-                             (phrase-belief db cause speaker listener)))
-                      ;; not my own thought; I heard it from someone
-                      (if-let [source (:belief/source belief)]
-                        (cond
-                          (= source (:belief/subject belief))
-                          (replacem "FOO told me HIM/HERself."
-                                    {"FOO" (name source)
-                                     "HIM/HER" (him-her db source)})
-                          :else
-                          (format "I heard it from %s."
-                                  (name source)))
-                        ;; there is neither a cause nor a source
-                        ""))
-        ]
-    (str/join \newline [message-prefix message-str explain-str])))
-
 (defn all-people
   [db]
   (d/q '[:find [?person ...]
@@ -569,7 +486,7 @@
             :wrong? true
             :known-lie? true
             :news? true})
-         ;; wrong, but not a lie
+         ;; wrong, but not a lie - i.e. outdated; news to speaker
          (assoc fixed
                 :existing existing
                 :wrong? true
@@ -615,6 +532,7 @@
       (if-let [belief (first all-bs)]
         (let [response (goss-result db speaker listener belief)
               ]
+          ;; TODO: (:wrong? response) - move debts into (turn)
           (if (:news? response)
             ;; found substantial gossip, so stop telling, clear debt
             (let [db (cond-> (:db response)
@@ -685,7 +603,6 @@
   :partner
   :fwd-part
   :back-part
-  :meet-phrase
   "
   [db initiator]
   (let [partner (random-partner db initiator)
@@ -704,20 +621,6 @@
                                  (think db partner)
                                  [db nil])
         ;; ok let's not go crazy... stop now.
-        meet-str (-> (rand-nth meeting-phrases)
-                     (replacem {"SPE" (name initiator)
-                                "LIS" (name partner)
-                                "HIM/HER" (him-her db partner)}))
-        fwd-reply (when (:gossip fwd-part)
-                    (if (contains? #{:anger :fear}
-                                   (:belief/feeling (first partner-thoughts1)))
-                      (rand-nth negative-response-phrases)
-                      (rand-nth positive-response-phrases)))
-        back-reply (when (:gossip back-part)
-                     (if (contains? #{:anger :fear}
-                                   (:belief/feeling (first initiat-thoughts1)))
-                      (rand-nth negative-response-phrases)
-                      (rand-nth positive-response-phrases)))
         ]
     {:db db
      :fwd-part fwd-part
@@ -729,10 +632,6 @@
      :initiator-thoughts initiat-thoughts2
      :partner-thoughts (concat partner-thoughts2
                                partner-thoughts3)
-     ;; should be separate narrative function:
-     :meet-phrase meet-str
-     :fwd-reply fwd-reply
-     :back-reply back-reply
      }))
 
 (defn random-turn
