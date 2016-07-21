@@ -374,9 +374,7 @@
 (defn make-up-lies
   [db speaker listener]
   (let [people (all-people db)
-        others (-> (set people)
-                   (disj speaker listener)
-                   (seq))]
+        others (remove #{speaker listener} people)]
     (->>
      (repeatedly
       100
@@ -391,7 +389,7 @@
             :them (let [other2 (rand-nth (remove #(= % other) others))]
                     [other other2 :fear])))))
      (map #(zipmap [:belief/subject :belief/object :belief/feeling] %))
-     (map #(assoc % :belief/lie? true)))))
+     (map #(assoc % :belief/lie? true, :belief/fabricator speaker)))))
 
 (defn indebted
   [db from to]
@@ -408,6 +406,20 @@
     :where
     [?e :debt/from ?from]
     [?e :debt/to ?to]])
+
+(defn update-debt
+  [db from to had-gossip?]
+  (let [owing (indebted db from to)]
+    (cond
+      ;; clear debt
+      (and owing had-gossip?)
+      (d/db-with db [[:db.fn/retractEntity owing]])
+      ;; fall in to debt
+      (and (not owing) (not had-gossip?))
+      (d/db-with db [{:debt/from from
+                      :debt/to to}])
+      :else
+      db)))
 
 (defn prioritised-potential-gossip
   [db speaker listener]
@@ -433,6 +445,11 @@
   * Listener updates model of speaker mind according to corrected version
   * Speaker updates model of listener mind with corrected version
 
+  There are three cases
+  - listener knows it was a lie, and responds with corrected belief and their new anger.
+  - listener knows it was outdated, and responds with corrected belief.
+  - otherwise it is treated as correct, but may or may not be news.
+
   Returns keys
   :db
   :existing
@@ -457,24 +474,33 @@
         news? (and (not= (:belief/feeling existing) (:belief/feeling belief))
                    (not secret-lie?))
         correction? (and (= subj listener) news?)
-        known-lie? (and correction? (:belief/lie? belief))]
+        ;; TODO: exposed lie does not count as gossip if we already know about it
+        ;; also - knowledge of the lie should pass back to speaker
+        ;; would need a global lie id
+        ;; ohhhh, we shouldn't update beliefs at all; we should retractentity
+        ;; that would help cause refs as well (although retract = delete in datascript)
+        exposed-lie? (and correction? (:belief/lie? belief))]
     (if correction?
       (let [fixed (goss-result db listener speaker existing)
             db (:db fixed)]
-        (if known-lie?
-         (let [from (:belief/fabricator belief)
-               angry {:belief/subject listener
+        (if exposed-lie?
+         (let [from (:belief/fabricator belief) ;; or direct source?
+               angry {:belief/person listener
+                      :belief/mind listener
+                      :belief/subject listener
                       :belief/object from
                       :belief/feeling :anger
                       :belief/cause (:db/id belief)}
                ;; if we thought they liked us before, now assume they don't.
+               ;; this prevents listener from reciprocally re-liking fabricator...
+               ;; TODO: need this?? might be detrimental to listener.
                nolike {:belief/person listener
                        :belief/mind listener
                        :belief/subject from
                        :belief/object listener
                        :belief/feeling :none
                        :belief/cause (:db/id belief)}
-               waslike? (= :like (:relation/feeling (existing-belief db nolike)))
+               waslike? (= :like (:belief/feeling (existing-belief db nolike)))
                to-apply (for [belief (if waslike? [angry nolike] [angry])
                               person [speaker listener]
                               mind [speaker listener]]
@@ -484,14 +510,15 @@
            {:db (d/db-with db to-apply)
             :existing existing
             :wrong? true
-            :known-lie? true
+            :exposed-lie? true
+            :reaction angry
             :news? true})
          ;; wrong, but not a lie - i.e. outdated; news to speaker
          (assoc fixed
                 :existing existing
                 :wrong? true
                 :news? false)))
-      ;; no need for correction
+      ;; usual case - no need for correction
       (let [to-apply (->>
                       [(when-not secret-lie?
                          (assoc belief :belief/person listener :belief/mind listener))
@@ -501,7 +528,7 @@
                        (assoc belief :belief/person speaker :belief/mind listener)
                        ]
                       (remove nil?)
-                      (map #(updatable-belief db %)))]
+                      (mapv #(updatable-belief db %)))]
         {:db (d/db-with db to-apply)
          :existing existing
          :news? news?
@@ -517,47 +544,61 @@
   :listener
   :gossip (the belief new to the listener)
   :existing (the belief the listener held before)
-  :known-lie?
+  :exposed-lie?
+  :reaction
+  :back-gossip (in case there were corrections - beliefs new to speaker)
   :minor-news
   "
   [db speaker listener]
   (let [db-before db
         partial-result {:db-before db
                         :speaker speaker
-                        :listener listener}
-        owing (indebted db speaker listener)]
+                        :listener listener}]
     (loop [all-bs (prioritised-potential-gossip db speaker listener)
+           back-gossip []
            minor-news []
            db db]
       (if-let [belief (first all-bs)]
-        (let [response (goss-result db speaker listener belief)
-              ]
-          ;; TODO: (:wrong? response) - move debts into (turn)
-          (if (:news? response)
-            ;; found substantial gossip, so stop telling, clear debt
-            (let [db (cond-> (:db response)
-                       owing (d/db-with [[:db.fn/retractEntity owing]]))]
-              (assoc partial-result
-                     :db db
-                     :gossip belief
-                     :existing (:existing response)
-                     :known-lie? (:known-lie? response)
-                     :minor-news minor-news))
-            ;; not news, keep trying
+        (let [response (goss-result db speaker listener belief)]
+          (cond
+            ;; exposing a lie is sufficient gossip to stop telling and clear debt.
+            (:exposed-lie? response)
+            (assoc partial-result
+                   :db (:db response)
+                   :gossip belief
+                   :reaction (:reaction response)
+                   :existing (:existing response)
+                   :exposed-lie? true
+                   :back-gossip back-gossip
+                   :minor-news minor-news)
+            ;; outdated info does not count as gossip.
+            (:wrong? response)
             (recur (rest all-bs)
+                   (conj back-gossip [belief (:existing response)])
+                   minor-news
+                   (:db response))
+            ;; valid gossip
+            (:news? response)
+            (assoc partial-result
+                   :db (:db response)
+                   :gossip belief
+                   :existing (:existing response)
+                   :back-gossip back-gossip
+                   :minor-news minor-news)
+            ;; not news, keep trying
+            :else
+            (recur (rest all-bs)
+                   back-gossip
                    (if (:minor-news? response)
                      (conj minor-news belief)
                      minor-news)
                    (:db response))))
         ;; tried everything, no gossip
-        ;; fall in to debt
-        (let [db (cond-> db
-                   (not owing) (d/db-with [{:debt/from speaker
-                                            :debt/to listener}]))]
-          (assoc partial-result
-                 :db db
-                 :gossip nil
-                 :minor-news minor-news))))))
+        (assoc partial-result
+               :db db
+               :gossip nil
+               :back-gossip back-gossip
+               :minor-news minor-news)))))
 
 (defn turn
   "Person has a turn being the initiator of an encounter.
@@ -606,11 +647,23 @@
   "
   [db initiator]
   (let [partner (random-partner db initiator)
+        ;; initiator speaks
         fwd-part (turn-part db initiator partner)
         db (:db fwd-part)
+        ;; if had back-gossip, clear partner debt before next part
+        db (if (seq (:back-gossip fwd-part))
+             (update-debt db partner initiator true)
+             db)
+        ;; partner speaks (think first)
         [db partner-thoughts1] (think db partner)
         back-part (turn-part db partner initiator)
         db (:db back-part)
+        ;; update debts
+        db (update-debt db initiator partner (or (:gossip fwd-part)
+                                                 (seq (:back-gossip back-part))))
+        db (update-debt db partner initiator (or (:gossip back-part)
+                                                 (seq (:back-gossip fwd-part))))
+        ;; do some thinking
         [db initiat-thoughts1] (think db initiator)
         [db partner-thoughts2] (think db partner)
         ;; there might be more thoughts that can derived now:
