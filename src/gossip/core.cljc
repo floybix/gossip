@@ -22,8 +22,9 @@
    :belief/cause {:db/doc "Which other belief led to this belief."
                   :db/valueType :db.type/ref}
    :belief/source {:db/doc "Who did I learn this from."}
-   :belief/original {:db/doc "Who was the original source."}
-   :belief/lie? {:db/doc "True if this is a lie (unbeknownst to the holder)."}
+   :belief/lie? {:db/doc "True if this is a lie (unbeknownst to the
+                          holder). This is stored as a convenience."}
+   :belief/fabricator {:db/doc "Who was the original source of a lie."}
    :belief/phrase {:db/doc "An english phrase expressing this belief/feeling."}
    :belief/subject {:db/doc "Who feels the feeling, eg the angry one."}
    :belief/object {:db/doc "Who is the feeling felt for, eg the one angry with."}
@@ -517,55 +518,90 @@
 
   Returns keys
   :db
+  :existing
+  :wrong?
+  :known-lie?
   :news?
-  :lie?
   :minor-news?
   "
   [db speaker listener belief]
-  (let [belief (assoc belief :belief/source speaker) ;; TODO: cause nil?
+  (let [spe-belief belief
+        belief (assoc belief :belief/source speaker) ;; TODO: cause nil?
         subj (:belief/subject belief)
-        lis-facts {:my-mind (assoc belief
-                                   :belief/person listener
-                                   :belief/mind listener)
-                   :spe-mind (assoc belief
-                                    :belief/person listener
-                                    :belief/mind speaker)
-                   :subj-mind (assoc belief
-                                     :belief/person listener
-                                     :belief/mind subj)}
-        spe-facts {:lis-mind (assoc belief
-                                    :belief/person speaker
-                                    :belief/mind listener)}
+        lis-fact (assoc belief
+                        :belief/person listener
+                        :belief/mind listener)
         knew-that? (fn [mind-belief]
                      (= (:belief/feeling (existing-belief db mind-belief))
                         (:belief/feeling belief)))
-        ;; TODO: outdated / lies - corrections and responses
-        to-apply (concat
-                  (when-not (knew-that? (:my-mind lis-facts))
-                    [(updatable-belief db (:my-mind lis-facts))
-                     (updatable-belief db (:subj-mind lis-facts))])
-                  (when-not (knew-that? (:spe-mind lis-facts))
-                    [(updatable-belief db (:spe-mind lis-facts))])
-                  (when-not (knew-that? (:lis-mind spe-facts))
-                    [(updatable-belief db (:lis-mind spe-facts))]))
-        ]
-    {:db (if (seq to-apply) (d/db-with db to-apply) db)
-     :news? (not (knew-that? (:my-mind lis-facts)))
-     :minor-news? (not (knew-that? (:spe-mind lis-facts)))}
-    )
-  )
+        existing (existing-belief db lis-fact)
+        ;; do not believe or correct your own lies!
+        secret-lie? (= (:belief/fabricator belief) listener)
+        news? (and (not= (:belief/feeling existing) (:belief/feeling belief))
+                   (not secret-lie?))
+        correction? (and (= subj listener) news?)
+        known-lie? (and correction? (:belief/lie? belief))]
+    (if correction?
+      (let [fixed (goss-result db listener speaker existing)
+            db (:db fixed)]
+        (if known-lie?
+         (let [from (:belief/fabricator belief)
+               angry {:belief/subject listener
+                      :belief/object from
+                      :belief/feeling :anger
+                      :belief/cause (:db/id belief)}
+               ;; if we thought they liked us before, now assume they don't.
+               nolike {:belief/person listener
+                       :belief/mind listener
+                       :belief/subject from
+                       :belief/object listener
+                       :belief/feeling :none
+                       :belief/cause (:db/id belief)}
+               waslike? (= :like (:relation/feeling (existing-belief db nolike)))
+               to-apply (for [belief (if waslike? [angry nolike] [angry])
+                              person [speaker listener]
+                              mind [speaker listener]]
+                          (->> (assoc belief :belief/person person :belief/mind mind)
+                               (updatable-belief db)))
+               ]
+           {:db (d/db-with db to-apply)
+            :existing existing
+            :wrong? true
+            :known-lie? true
+            :news? true})
+         ;; wrong, but not a lie
+         (assoc fixed
+                :existing existing
+                :wrong? true
+                :news? false)))
+      ;; no need for correction
+      (let [to-apply (->>
+                      [(when-not secret-lie?
+                         (assoc belief :belief/person listener :belief/mind listener))
+                       (when-not secret-lie?
+                         (assoc belief :belief/person listener :belief/mind subj))
+                       (assoc belief :belief/person listener :belief/mind speaker)
+                       (assoc belief :belief/person speaker :belief/mind listener)
+                       ]
+                      (remove nil?)
+                      (map #(updatable-belief db %)))]
+        {:db (d/db-with db to-apply)
+         :existing existing
+         :news? news?
+         :minor-news? (not (knew-that? (assoc lis-fact :belief/mind speaker)))}))
+    ))
 
 (defn turn-part
   "Returns keys
 
-  :db ?
+  :db
+  :db-before
   :speaker
   :listener
-  :new-beliefs
   :gossip (the belief new to the listener)
-  :spe-thoughts ?
-  :lis-thoughts ?
-  :narrative
+  :existing (the belief the listener held before)
+  :known-lie?
+  :minor-news
   "
   [db speaker listener]
   (let [db-before db
@@ -577,22 +613,24 @@
            minor-news []
            db db]
       (if-let [belief (first all-bs)]
-        (let [result (goss-result db speaker listener belief)
+        (let [response (goss-result db speaker listener belief)
               ]
-          (if (:news? result)
+          (if (:news? response)
             ;; found substantial gossip, so stop telling, clear debt
-            (let [db (cond-> (:db result)
+            (let [db (cond-> (:db response)
                        owing (d/db-with [[:db.fn/retractEntity owing]]))]
               (assoc partial-result
                      :db db
                      :gossip belief
+                     :existing (:existing response)
+                     :known-lie? (:known-lie? response)
                      :minor-news minor-news))
             ;; not news, keep trying
             (recur (rest all-bs)
-                   (if (:minor-news? result)
+                   (if (:minor-news? response)
                      (conj minor-news belief)
                      minor-news)
-                   (:db result))))
+                   (:db response))))
         ;; tried everything, no gossip
         ;; fall in to debt
         (let [db (cond-> db
