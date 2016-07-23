@@ -97,6 +97,19 @@
     [?e :belief/feeling :like]]
   )
 
+(def my-true-popularity-q
+  "Query to find how popular a character is (how many people like
+  them). Parameter is person id, the one liked by ?n others."
+  '[:find (count ?mind) .
+    :in $ ?obj
+    :where
+    [?e :belief/person ?mind]
+    [?e :belief/mind ?mind]
+    [?e :belief/subject ?mind]
+    [?e :belief/object ?obj]
+    [?e :belief/feeling :like]]
+  )
+
 (defn existing-belief
   [db belief]
   (d/q '[:find (pull ?e [*]) .
@@ -291,9 +304,10 @@
                              only like me. Now I'm angry with OBJ."
                          {"SUBJ" (name x), "OBJ" (name other)})
                (= :like new-feeling)
-               (replacem "Great, SUBJ likes OBJ so they must be fun,
-                             I'll be friends with them too."
-                         {"SUBJ" (name x), "OBJ" (name other)}))))))
+               (replacem "Great, SUBJ likes OBJ so HE/SHE must be fun,
+                             I'll be friends with OBJ too."
+                         {"SUBJ" (name x), "OBJ" (name other)
+                          "HE/SHE" (he-she db other)}))))))
 
 (defn me-like-x-&-x-fear-y-response
   [db person mind]
@@ -311,11 +325,49 @@
   [db person mind]
   )
 
+(defn like-more-popular-non-enemies
+  [db person mind]
+  (let [likes (->> (d/q perceived-popularity-q
+                        db person mind)
+                   (into {}))
+        my-n-likes (get likes mind)
+        ]
+    (for [[x n-likes] (dissoc likes mind)
+          ;; those (much) more popular than me
+          :when (>= n-likes (+ my-n-likes 2))
+          ;; nothing to do if i already like them
+          :let [belief {:belief/person person
+                        :belief/mind mind
+                        :belief/subject mind
+                        :belief/object x}
+                existing (existing-belief db belief)]
+          :when (not= :like (:belief/feeling existing))
+          ;; skip if anyone i like is angry with them
+          :let [ans (d/q '[:find ?friend
+                           :in $ ?person ?mind ?x %
+                           :where
+                           (feels-for ?e1 ?person ?mind ?mind ?friend :like)
+                           (feels-for ?e2 ?person ?mind ?friend ?x :anger)
+                           ]
+                         db person mind x dbrules)]
+          ]
+      (assoc belief
+             :belief/feeling :like
+             ;; TODO: complex-cause?
+             :belief/phrase
+             (replacem "FOO is so cool, HE/SHE already has NUMB friends. I like HIM/HER."
+                       {"FOO" (name x)
+                        "HE/SHE" (he-she db x)
+                        "NUMB" (likes x)
+                        "HIM/HER" (him-her db x)})
+             ))))
+
 (def all-response-fns
   [mutual-fear-response
    x-like-me-response
    x-angry-me-response
-   me-like-x-&-x-like-y-response])
+   me-like-x-&-x-like-y-response
+   like-more-popular-non-enemies])
 
 (comment
   (use 'clojure.pprint)
@@ -362,7 +414,7 @@
 
 (defn favourable-ness
   "How might it affect my popularity if others learn this belief?
-  One of -1, 0, 1.
+  A number where negative is bad and positive is good.
 
   A more sophisticated version would look at our theory of the
   listener's mind, and prioritise beliefs that (we think) would change
@@ -373,9 +425,9 @@
         feeling (:belief/feeling belief)]
     (match [subj obj feeling]
            ;; i am liked
-           [_ me :like] 1
+           [_ me :like] 2
            ;; i am not liked
-           [_ me _] -1
+           [_ me _] -2
            ;; someone else is liked
            [_ _ :like] -1
            ;; someone else is not liked

@@ -91,7 +91,9 @@
                                       :person/gender gender
                                       :person/avatar avatar}])
            (swap! ui-state assoc-in [:adding-person :name] "")))
-       :disabled (when (str/blank? (:name person)) "disabled")}
+       :disabled (when (or (str/blank? (:name person))
+                           (:encounter @app-state))
+                   "disabled")}
       "Add person"]]))
 
 (defn add-belief-pane
@@ -154,8 +156,9 @@
            (swap-advance! app-state update :db
                           gossip/believe subject subject subject object feeling)
            (swap! ui-state assoc-in [:adding-belief :object] nil)))
-       :disabled (when-not (and (:subject belief)
-                                (:object belief))
+       :disabled (when (or (not (:subject belief))
+                           (not (:object belief))
+                           (:encounter @app-state))
                    "disabled")}
       "Add feeling"]]))
 
@@ -180,7 +183,7 @@
                                    :like "bg-warning" ;; yellow
                                    :anger "bg-danger" ;; red
                                    :fear "bg-info" ;; blue
-                                   ))}
+                                   ""))}
                        [(if (:missing? belief) :del :span)
                         (narr/phrase-belief db belief (:belief/mind belief) nil)]]))]
     [:div
@@ -273,14 +276,14 @@
                                 (belief-li mind belief)))]
                        [:p.small
                         "I don't know others' feelings."])
-                     (let [pops (->> (d/q gossip/perceived-popularity-q
-                                          db (or pov mind) mind)
-                                     (sort-by second >))
-                           maxpop (second (first pops))
-                           mostpop (->> pops
-                                        (take-while #(= maxpop (second %)))
+                     (let [likes (->> (d/q gossip/perceived-popularity-q
+                                           db (or pov mind) mind)
+                                      (sort-by second >))
+                           maxlikes (second (first likes))
+                           mostpop (->> likes
+                                        (take-while #(= maxlikes (second %)))
                                         (map first))]
-                       (if (>= maxpop 2)
+                       (if (>= maxlikes 2)
                          [:p
                           (str/join " and " (map name mostpop))
                           (if (> (count mostpop) 1) " are " " is ")
@@ -288,11 +291,15 @@
                          [:p.small
                           "I don't know who is most popular."]))]))]
                [:div.panel-footer
+                ;; how popular am i really
+                (when-let [likes (d/q gossip/my-true-popularity-q db mind)]
+                  [:p.small {:style {:white-space "nowrap"}}
+                   "Popularity " [:span.badge likes]])
+                ;; who am i indebted to
                 (let [dto (d/q gossip/indebted-to-q db mind)]
-                  ;; how popular am i really
-                  ;; who am i indebted to
                   (when (seq dto)
-                    [:small "I owe gossip to "
+                    [:div.small
+                     "I owe gossip to "
                      (str/join ", " (map name dto))])
                   )]]
               ]))]))
@@ -302,7 +309,9 @@
   (let [{:keys [speaker listener gossip existing reaction exposed-lie?]} part
         db (:db-before part)
         spe (name speaker)
-        lis (name listener)]
+        lis (name listener)
+        owing-before (gossip/indebted db speaker listener)
+        owing-after (gossip/indebted (:db-after part) speaker listener)]
     [:div
      ;; back-gossip if any - i.e. correcting outdated beliefs
      (when-let [backgoss (seq (:back-gossip part))]
@@ -316,11 +325,11 @@
            [:p
             [:b (str lis ": ")]
             (str "No, that's wrong. "
-                 (narr/phrase-gossip db listener speaker corrected))]]
+                 (narr/phrase-belief db listener speaker corrected))]]
           )))
      ;; the valid gossip if any (or the belief which was exposed as a lie)
      ;; first, prefix when owing:
-     (when (and (gossip/indebted db speaker listener)
+     (when (and owing-before
                 (= speaker (:belief/fabricator gossip)))
        [:p
         [:i
@@ -333,10 +342,11 @@
       (str (if gossip
              (narr/phrase-gossip db speaker listener gossip)
              "I got nothing, sorry."))]
-     ;; lie correction and reaction, if any
-     (if exposed-lie?
-       (let [fabricator (:belief/object reaction)
-             ]
+     ;; response
+     (cond
+       ;; lie correction and reaction, if any
+       exposed-lie?
+       (let [source (:belief/object reaction)]
          [:p
           [:b (str lis ": ")]
           (str "That's a lie!"
@@ -344,21 +354,25 @@
                  (str " I don't like " (him-her db (:belief/object gossip)) ".")
                  (when existing
                    (str " " (narr/phrase-belief db existing listener speaker))))
-               " I'm so angry with " (name fabricator)
+               " I'm so angry with " (name source)
                " for spreading lies about me!")])
-       ;; not an exposed lie.
        ;; note existing belief that was replaced, if any
-       (when existing
+       existing
+       [:p
+        [:b (str lis ": ")]
+        (str "Really? So it's not true that "
+             (narr/phrase-belief db existing listener speaker))]
+       ;; no gossip
+       (not gossip)
+       (when owing-after
          [:p
           [:b (str lis ": ")]
-          (str "Really? Oh. I thought "
-               (narr/phrase-belief db existing listener speaker))])
-       )
-     [:p
-      [:b (str lis ": ")]
-      (str (if gossip
-             reply
-             "You owe me, ok?"))]
+          "You owe me, ok?"])
+       ;; otherwise
+       :else
+       [:p
+        [:b (str lis ": ")]
+        (str reply)])
      ;; minor news, if any - stuff the listener didn't know that speaker knew
      (when-let [minor (seq (:minor-news part))]
        [:div
@@ -372,12 +386,12 @@
                              minor)))]
         [:p
          [:b (str lis ": ")]
-         (let [embarrased? (some #(and (= (:belief/subject listener))
-                                       (= (:belief/object speaker)))
+         (let [embarrased? (some #(and (= (:belief/subject %) listener)
+                                       (= (:belief/object %) speaker))
                                  minor)]
            (if embarrased?
              [:span [:i "Gulp."] " Er, gotta go now, bye!"]
-             "Oh yeah, that."))]
+             "Oh yeah. I was going to tell you..."))]
         ])
      ;; listener's thoughts after the interaction
      (when (seq thoughts)
@@ -438,6 +452,9 @@
                       (d/pull db '[*] [:person/id (:partner enc)]))]
          [:div
           [:div ;.col-md-4
+           [:p
+            [:i
+             (narr/emotional-setting db (:initiator enc) (:partner enc))]]
            [:p.lead
             (:meet-phrase enc)]
            [:div

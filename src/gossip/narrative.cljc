@@ -46,30 +46,31 @@
         :like (format "I like %s." obj-name)
         :anger (format "I'm angry with %s." obj-name)
         :fear (format "I'm afraid of %s." obj-name)
-        :none (format "I have no issue with %s." obj-name))
+        :none (format "I don't care about %s." obj-name))
       ;; your feeling
       (= subj listener)
       (case feel
         :like (format "you like %s." obj-name)
         :anger (format "you are angry with %s." obj-name)
         :fear (format "you are afraid of %s." obj-name)
-        :none (format "you have no issue with %s." obj-name))
+        :none (format "you don't care about %s." obj-name))
       ;; someone else's feeling
       :else
       (case feel
         :like (format "%s likes %s." (name subj) obj-name)
         :anger (format "%s is angry with %s." (name subj) obj-name)
         :fear (format "%s is afraid of %s." (name subj) obj-name)
-        :none (format "%s has no issue with %s." (name subj) obj-name))
+        :none (format "%s doesn't care about %s." (name subj) obj-name))
       )
     ))
 
 (defn phrase-gossip
   "Returns string"
   [db speaker listener belief]
-  (let [;; TODO: what if belief subject is the listener? a confrontation.
+  (let [subj (:belief/subject belief)
+        obj (:belief/object belief)
         message-prefix (rand-nth message-prefixes)
-        message-str (str (if (= listener (:belief/subject belief))
+        message-str (str (if (= listener subj)
                            "I heard " "")
                          (phrase-belief db belief speaker listener))
         explain-str (if-let [cause-e (:belief/cause belief)]
@@ -77,20 +78,90 @@
                       (let [cause (d/pull db '[*] (:db/id cause-e))]
                         (str "It all started because "
                              (phrase-belief db cause speaker listener)))
-                      ;; not my own thought; I heard it from someone
-                      (if-let [source (:belief/source belief)]
-                        (cond
-                          (= source (:belief/subject belief))
-                          (replacem "FOO told me HIM/HERself."
-                                    {"FOO" (name source)
-                                     "HIM/HER" (him-her db source)})
-                          :else
-                          (format "I heard it from %s."
-                                  (name source)))
-                        ;; there is neither a cause nor a source
-                        ""))
+                      ;; no or unknown/outdated cause
+                      (cond
+                        (= speaker subj)
+                        "" ;; i just feel that way
+                        (and (= speaker obj) (= :like (:belief/feeling belief)))
+                        "" ;; of course they like me, who wouldn't
+                        :else
+                        "I don't know why."))
+        source-str (if-let [source (:belief/source belief)]
+                     (cond
+                       (= source subj)
+                       (replacem "FOO told me HIM/HERself."
+                                 {"FOO" (name source)
+                                  "HIM/HER" (him-her db source)})
+                       :else
+                       (format "I heard it from %s."
+                               (name source)))
+                     ;; there is no source
+                     "")
         ]
-    (str/join \newline [message-prefix message-str explain-str])))
+    (str/join \newline [message-prefix message-str explain-str source-str])))
+
+(defn my-emotional-setting
+  "Returns
+  [i-feel they-feel emo-string]
+  where i-feel is the what the initiator feels for partner,
+  they-feel is what the initiator thinks partner feels for them,
+  emo-string is a string describing the initiator's beliefs."
+  [db initiator partner]
+  (let [stance-q '[:find (pull ?e [*]) .
+                   :in $ ?mind ?x %
+                   :where
+                   (feels-for ?e ?mind ?mind ?mind ?x _)]
+        versus-q '[:find (pull ?e [*]) .
+                   :in $ ?mind ?x %
+                   :where
+                   (feels-for ?e ?mind ?mind ?x ?mind _)]
+        stance (d/q stance-q db initiator partner gossip/dbrules)
+        versus (d/q versus-q db initiator partner gossip/dbrules)
+        no-stance {:belief/subject initiator, :belief/object partner :belief/feeling :none}
+        no-versus {:belief/subject partner, :belief/object initiator :belief/feeling :none}
+        vs (case [(:belief/feeling stance :none)
+                  (:belief/feeling versus :none)]
+             [:like :like] "and"
+             [:fear :anger] "and"
+             [:anger :fear] "and"
+             [:anger :anger] "and"
+             [:none :none] "and"
+             ;; otherwise:
+             "but")]
+    [(:belief/feeling stance :none)
+     (:belief/feeling versus :none)
+     (str
+      (phrase-belief db (or stance no-stance) nil nil)
+      ".. " vs " thinks "
+      (-> (phrase-belief db (or versus no-versus) nil nil)
+          (replacem {(name initiator) (him-her db initiator)}))
+      )]))
+
+(defn emotional-setting
+  [db initiator partner]
+  (let [[ini-feel ini-vs ini-str] (my-emotional-setting db initiator partner)
+        [par-feel par-vs par-str] (my-emotional-setting db partner initiator)
+        ini-corr? (= ini-vs par-feel)
+        par-corr? (= par-vs ini-feel)]
+    (cond
+      (= :none ini-feel ini-vs par-feel par-vs)
+      ""
+      (= :like ini-feel ini-vs par-feel par-vs)
+      (str (name initiator) " and " (name partner) " are friends.")
+      (= :anger ini-feel ini-vs par-feel par-vs)
+      (str (name initiator) " and " (name partner) " are angry with each other.")
+      :else ;; it's complicated
+      (str ini-str " "
+          (cond
+            (and ini-corr? par-corr?)
+            "Equally, "
+            ini-corr?
+            "It's true, "
+            par-corr?
+            "However, "
+            :else ;; both wrong!
+            "Sadly, ")
+          par-str))))
 
 (defn narrate-turn
   [{:keys [db fwd-part back-part fwd-thoughts back-thoughts
