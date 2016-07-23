@@ -40,6 +40,7 @@
                    (= speaker obj) "me"
                    :else (name obj))]
     (cond
+      (not feel) ""
       ;; my feeling
       (= subj speaker) ;; quite different grammar...
       (case feel
@@ -76,8 +77,9 @@
         explain-str (if-let [cause-e (:belief/cause belief)]
                       ;; look up reason
                       (let [cause (d/pull db '[*] (:db/id cause-e))]
-                        (str "It all started because "
-                             (phrase-belief db cause speaker listener)))
+                        (when (:belief/feeling cause)
+                          (str "It all started because "
+                               (phrase-belief db cause speaker listener))))
                       ;; no or unknown/outdated cause
                       (cond
                         (= speaker subj)
@@ -142,14 +144,33 @@
   (let [[ini-feel ini-vs ini-str] (my-emotional-setting db initiator partner)
         [par-feel par-vs par-str] (my-emotional-setting db partner initiator)
         ini-corr? (= ini-vs par-feel)
-        par-corr? (= par-vs ini-feel)]
+        par-corr? (= par-vs ini-feel)
+        ini (name initiator)
+        par (name partner)
+        rm {"INI" ini, "PAR" par}]
     (cond
       (= :none ini-feel ini-vs par-feel par-vs)
       ""
       (= :like ini-feel ini-vs par-feel par-vs)
-      (str (name initiator) " and " (name partner) " are friends.")
+      (replacem "INI and PAR are friends." rm)
       (= :anger ini-feel ini-vs par-feel par-vs)
-      (str (name initiator) " and " (name partner) " are angry with each other.")
+      (replacem "INI and PAR are angry with each other and both know it." rm)
+      ;; initiator alone
+      (= :none ini-vs par-feel par-vs)
+      (-> (str (case ini-feel
+                 :like "INI likes PAR"
+                 :anger "INI is angry with PAR"
+                 :fear "INI is afraid of PAR")
+               ", but PAR doesn't know it.")
+          (replacem rm))
+      ;; partner alone
+      (= :none ini-feel ini-vs par-vs)
+      (-> (str (case par-feel
+                 :like "PAR likes INI"
+                 :anger "PAR is angry with INI"
+                 :fear "PAR is afraid of INI")
+               ", but INI doesn't know it.")
+          (replacem rm))
       :else ;; it's complicated
       (str ini-str " "
           (cond
