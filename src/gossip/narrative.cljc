@@ -60,7 +60,6 @@
                    (= listener obj) "you"
                    (= speaker obj) "me"
                    :else (name obj))]
-    (println belief)
     (cond
       (not feel) ""
       ;; my feeling
@@ -98,7 +97,7 @@
                          (= listener subj source)
                          (str "You know how you told me")
                          (= listener subj)
-                         (str "I heard " prefix*)
+                         (str prefix* " I heard")
                          :else
                          prefix*)
         message-str (phrase-belief db belief speaker listener)
@@ -113,12 +112,21 @@
                       ;; a complex cause
                       (:belief/complex-cause belief)
                       (let [cc (:belief/complex-cause belief)]
+                        (prn "obj " obj listener)
+                        (prn speaker listener belief)
                         (cond
                           (= cc :lie)
-                          (replacem "It's because HE/SHE spread lies about me."
-                                    {"HE/SHE" (he-she db obj)})
+                          (replacem "It's because OBJ spread lies about SUBJ."
+                                    {"OBJ" (cond
+                                             (= obj speaker) "I"
+                                             (= obj listener) "you"
+                                             :else (he-she db obj))
+                                     "SUBJ" (case subj
+                                              speaker "me"
+                                              listener "you"
+                                              (name subj))})
                           (= cc :popularity)
-                          (replacem "It's because HE/SHE is so cool."
+                          (replacem "It's because HE/SHE is popular."
                                     {"HE/SHE" (he-she db obj)})
                           :else
                           (str "It's because " cc)))

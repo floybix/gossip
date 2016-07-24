@@ -348,7 +348,7 @@
              (replacem "OBJ and I are both angry with SUBJ. Yeah, we're on the same team.
                        I like HIM/HER."
                        {"SUBJ" (name x), "OBJ" (name other)
-                        "HIM/HER" (him-her db x)})))))
+                        "HIM/HER" (him-her db other)})))))
 
 (defn like-more-popular-non-enemies
   [db person mind]

@@ -356,6 +356,7 @@
                  (str " I don't like " (him-her db (:belief/object gossip)) ".")
                  (when existing
                    (str " " (narr/phrase-belief db existing listener speaker))))
+               " "
                (-> (rand-nth narr/lie-response-phrases)
                    (replacem {"SOURCE" (name source)})))])
        ;; note existing belief that was replaced, if any
@@ -503,12 +504,6 @@
                (->> thoughts
                     (map :belief/phrase)
                     (str/join \newline))]])
-           (let [part (:fwd-part enc)]
-             )
-           [:p (str "Fwd thoughts: " (:fwd-thoughts enc))]
-           [:p (str "Back thoughts: " (:back-thoughts enc))]
-           [:p (str (:partner-thoughts enc))]
-           [:p (str (:initiator-thoughts enc))]
            ]
           ]))
 
