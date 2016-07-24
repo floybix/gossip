@@ -2,7 +2,7 @@
   (:require [reagent.core :as reagent :refer [atom]]
             [goog.dom.forms :as forms]
             [datascript.core :as d]
-            [gossip.core :as gossip :refer [he-she him-her]]
+            [gossip.core :as gossip :refer [he-she him-her replacem]]
             [gossip.narrative :as narr]
             [clojure.set :as set]
             [clojure.string :as str]))
@@ -288,7 +288,7 @@
                           (str/join " and " (map name mostpop))
                           (if (> (count mostpop) 1) " are " " is ")
                           "most popular."]
-                         [:p.small
+                         [:p.small.text-muted
                           "I don't know who is most popular."]))]))]
                [:div.panel-footer
                 ;; how popular am i really
@@ -324,8 +324,10 @@
             (narr/phrase-gossip db speaker listener attempt)]
            [:p
             [:b (str lis ": ")]
-            (str "No, that's wrong. "
-                 (narr/phrase-belief db listener speaker corrected))]]
+            (-> (rand-nth narr/correction-phrases)
+                (replacem {"CORRECT" (narr/phrase-belief db corrected listener speaker)
+                           }))
+            ]]
           )))
      ;; the valid gossip if any (or the belief which was exposed as a lie)
      ;; first, prefix when owing:
@@ -341,7 +343,7 @@
       [:b (str spe ": ")]
       (str (if gossip
              (narr/phrase-gossip db speaker listener gossip)
-             "I got nothing, sorry."))]
+             (rand-nth narr/no-gossip-phrases)))]
      ;; response
      (cond
        ;; lie correction and reaction, if any
@@ -354,20 +356,21 @@
                  (str " I don't like " (him-her db (:belief/object gossip)) ".")
                  (when existing
                    (str " " (narr/phrase-belief db existing listener speaker))))
-               " I'm so angry with " (name source)
-               " for spreading lies about me!")])
+               (-> (rand-nth narr/lie-response-phrases)
+                   (replacem {"SOURCE" (name source)})))])
        ;; note existing belief that was replaced, if any
        existing
        [:p
         [:b (str lis ": ")]
-        (str "Really? So it's not true that "
-             (narr/phrase-belief db existing listener speaker))]
+        (-> (rand-nth narr/correction-response-phrases)
+            (replacem {"OLDBELIEF" (narr/phrase-belief db existing listener speaker)}))
+        ]
        ;; no gossip
        (not gossip)
        (when owing-after
          [:p
           [:b (str lis ": ")]
-          "You owe me, ok?"])
+          (rand-nth narr/no-gossip-response-phrases)])
        ;; otherwise
        :else
        [:p
@@ -390,8 +393,8 @@
                                        (= (:belief/object %) speaker))
                                  minor)]
            (if embarrased?
-             [:span [:i "Gulp."] " Er, gotta go now, bye!"]
-             "Oh yeah. I was going to tell you..."))]
+             (rand-nth narr/embarrassed-phrases)
+             (rand-nth narr/minor-news-response-phrases)))]
         ])
      ;; listener's thoughts after the interaction
      (when (seq thoughts)

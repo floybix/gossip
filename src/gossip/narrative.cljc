@@ -18,6 +18,27 @@
    "I wanted to tell you,"
    "OMG I can't believe it!"])
 
+(def no-gossip-phrases
+  ["I got nothing, sorry."])
+
+(def no-gossip-response-phrases
+  ["You owe me, ok?"])
+
+(def lie-response-phrases
+  ["I'm so angry with SOURCE for spreading lies about me!"])
+
+(def correction-phrases
+  ["No, that's wrong. Now CORRECT"])
+
+(def correction-response-phrases
+  ["Really? So it's not true that OLDBELIEF"])
+
+(def embarrassed-phrases
+  [[:span [:i "Gulp."] " Er, gotta go now, bye!"]])
+
+(def minor-news-response-phrases
+  ["Oh yeah. I was going to tell you..."])
+
 (def positive-response-phrases
   ["Ha ha."
    "Oh wow."])
@@ -39,6 +60,7 @@
                    (= listener obj) "you"
                    (= speaker obj) "me"
                    :else (name obj))]
+    (println belief)
     (cond
       (not feel) ""
       ;; my feeling
@@ -70,26 +92,49 @@
   [db speaker listener belief]
   (let [subj (:belief/subject belief)
         obj (:belief/object belief)
-        message-prefix (rand-nth message-prefixes)
-        message-str (str (if (= listener subj)
-                           "I heard " "")
-                         (phrase-belief db belief speaker listener))
-        explain-str (if-let [cause-e (:belief/cause belief)]
-                      ;; look up reason
-                      (let [cause (d/pull db '[*] (:db/id cause-e))]
+        source (:belief/source belief)
+        prefix* (rand-nth message-prefixes)
+        message-prefix (cond
+                         (= listener subj source)
+                         (str "You know how you told me")
+                         (= listener subj)
+                         (str "I heard " prefix*)
+                         :else
+                         prefix*)
+        message-str (phrase-belief db belief speaker listener)
+        explain-str (cond
+                      ;; a simple cause
+                      (:belief/cause belief)
+                      (let [cause-e (:belief/cause belief)
+                            cause (d/pull db '[*] (:db/id cause-e))]
                         (when (:belief/feeling cause)
                           (str "It all started because "
                                (phrase-belief db cause speaker listener))))
-                      ;; no or unknown/outdated cause
-                      (cond
-                        (= speaker subj)
-                        "" ;; i just feel that way
-                        (and (= speaker obj) (= :like (:belief/feeling belief)))
-                        "" ;; of course they like me, who wouldn't
-                        :else
-                        "I don't know why."))
-        source-str (if-let [source (:belief/source belief)]
+                      ;; a complex cause
+                      (:belief/complex-cause belief)
+                      (let [cc (:belief/complex-cause belief)]
+                        (cond
+                          (= cc :lie)
+                          (replacem "It's because HE/SHE spread lies about me."
+                                    {"HE/SHE" (he-she db obj)})
+                          (= cc :popularity)
+                          (replacem "It's because HE/SHE is so cool."
+                                    {"HE/SHE" (he-she db obj)})
+                          :else
+                          (str "It's because " cc)))
+                      ;; otherwise - no or unknown/outdated cause
+                      (= speaker subj)
+                      "" ;; i just feel that way
+                      (and (= speaker obj) (= :like (:belief/feeling belief)))
+                      "" ;; of course they like me, who wouldn't
+                      (= listener subj)
+                      "" ;; do you feel that way?
+                      :else
+                      "I don't know why.")
+        source-str (if source
                      (cond
+                       (= source listener)
+                       "..."
                        (= source subj)
                        (replacem "FOO told me HIM/HERself."
                                  {"FOO" (name source)
@@ -181,7 +226,7 @@
             par-corr?
             "However, "
             :else ;; both wrong!
-            "Sadly, ")
+            "However, ")
           par-str))))
 
 (defn narrate-turn
