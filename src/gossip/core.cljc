@@ -21,6 +21,7 @@
                  :db/index true}
    :belief/cause {:db/doc "Which other belief led to this belief."
                   :db/valueType :db.type/ref}
+   :belief/complex-cause {:db/doc "Data describing a more complex cause."}
    :belief/source {:db/doc "Who did I learn this from."}
    :belief/lie? {:db/doc "True if this is a lie (unbeknownst to the
                           holder). This is stored as a convenience."}
@@ -323,7 +324,31 @@
 
 (defn me-angry-x-&-y-angry-x-response
   [db person mind]
-  )
+  (let [ans (d/q '[:find ?x ?other ?e2
+                   :in $ ?person ?mind %
+                   :where
+                   (feels-for ?e1 ?person ?mind ?mind ?x :anger)
+                   (feels-for ?e2 ?person ?mind ?other ?x :anger)
+                   [(not= ?other ?mind)]
+                   ]
+                 db person mind dbrules)]
+    (for [[x other e2] ans
+          ;; nothing to do if i already like them
+          :let [belief {:belief/person person
+                        :belief/mind mind
+                        :belief/subject mind
+                        :belief/object other}
+                existing (existing-belief db belief)]
+          :when (not= :like (:belief/feeling existing))
+          ]
+      (assoc belief
+             :belief/feeling :like
+             :belief/cause e2
+             :belief/phrase
+             (replacem "OBJ and I are both angry with SUBJ. Yeah, we're on the same team.
+                       I like HIM/HER."
+                       {"SUBJ" (name x), "OBJ" (name other)
+                        "HIM/HER" (him-her db x)})))))
 
 (defn like-more-popular-non-enemies
   [db person mind]
@@ -353,7 +378,7 @@
           ]
       (assoc belief
              :belief/feeling :like
-             ;; TODO: complex-cause?
+             :belief/complex-cause :popularity
              :belief/phrase
              (replacem "FOO is so cool, HE/SHE already has NUMB friends. I like HIM/HER."
                        {"FOO" (name x)
@@ -367,6 +392,7 @@
    x-like-me-response
    x-angry-me-response
    me-like-x-&-x-like-y-response
+   me-angry-x-&-y-angry-x-response
    like-more-popular-non-enemies])
 
 (comment
@@ -522,18 +548,19 @@
   "
   [db speaker listener belief]
   (let [orig-source (:belief/source belief)
-        belief (assoc belief :belief/source speaker) ;; TODO: cause nil?
+        belief (assoc belief :belief/source speaker)
         subj (:belief/subject belief)
         lis-fact (assoc belief
                         :belief/person listener
                         :belief/mind listener)
         knew-that? (fn [mind-belief]
-                     (= (:belief/feeling (existing-belief db mind-belief))
-                        (:belief/feeling belief)))
+                     (= (:belief/feeling (existing-belief db mind-belief) :none)
+                        (:belief/feeling belief :none)))
         existing (existing-belief db lis-fact)
         ;; do not believe or correct your own lies!
         secret-lie? (= (:belief/fabricator belief) listener)
-        news? (and (not= (:belief/feeling existing) (:belief/feeling belief))
+        news? (and (not= (:belief/feeling existing :none)
+                         (:belief/feeling belief :none))
                    (not secret-lie?))
         correction? (and (= subj listener) news?)
         ;; TODO: exposed lie does not count as gossip if we already know about it
@@ -555,7 +582,7 @@
                       :belief/subject listener
                       :belief/object from
                       :belief/feeling :anger
-                      :belief/cause (:db/id belief)}
+                      :belief/complex-cause :lie}
                ;; if we thought they liked us before, now assume they don't.
                ;; this prevents listener from reciprocally re-liking fabricator...
                ;; TODO: need this?? might be detrimental to listener.
@@ -564,7 +591,7 @@
                        :belief/subject from
                        :belief/object listener
                        :belief/feeling :none
-                       :belief/cause (:db/id belief)}
+                       :belief/complex-cause :lie}
                waslike? (= :like (:belief/feeling (existing-belief db nolike)))
                to-apply (for [belief (if waslike? [angry nolike] [angry])
                               person [speaker listener]
