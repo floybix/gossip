@@ -12,17 +12,30 @@
 (defonce app-state
   (atom {:db (d/empty-db gossip/db-schema)
          :encounter nil
+         :interactive nil
          :day 0
          }))
 
 (defonce ui-state
   (atom {:current-pov nil
+         :playing-as nil
          :choosing-avatar nil
          :adding-person {:name ""
                          :male? false}
          :adding-belief {:subject nil
                          :object nil
-                         :feeling :like}}))
+                         :feeling :like}
+         :play-belief {:subject nil
+                       :object nil
+                       :feeling :like}}))
+
+(defn init-interactive
+  [db player partner]
+  {:player player
+   :partner partner
+   :db db
+   :meet-str (narr/meeting-phrase db player partner)
+   :attempts []})
 
 (defonce undo-buffer
   (atom ()))
@@ -85,7 +98,7 @@
                id (keyword s)
                gender (if (:male? person)
                         :male :female)
-               avatar (if (:male? person) (first avatars) (second avatars))]
+               avatar (rand-nth avatars)]
            (swap-advance! app-state update :db
                           d/db-with [{:person/id id
                                       :person/gender gender
@@ -96,39 +109,36 @@
                    "disabled")}
       "Add person"]]))
 
-(defn add-belief-pane
-  [app-state ui-state]
-  (let [belief (:adding-belief @ui-state)
-        db (:db @app-state)
+(defn belief-input
+  [ui-state ui-state-key db subj-disabled]
+  (let [belief (get @ui-state ui-state-key)
         people (gossip/all-people db)]
-    [:div.form-inline.well
-     [:div.form-group
+    [:div.form-group
       ;; subject
       [:select.form-control
-       {:on-change (fn [e]
+       {:value (or (:subject belief) " ")
+        :on-change (fn [e]
                      (let [s (-> e .-target forms/getValue)]
                        (swap! ui-state assoc-in
-                              [:adding-belief :subject]
-                              (when (seq s) (keyword s)))))}
-       (for [person (cons "" people)]
+                              [ui-state-key :subject]
+                              (when-not (str/blank? s) (keyword s)))))
+        :disabled (when subj-disabled "disabled")}
+       (for [person (cons " " people)]
          [:option {:key person
-                   :value person
-                   :selected (if (= person (:subject belief)) "selected")
-                   }
+                   :value person}
           (name person)])
        ]
       ;; feeling
       [:select.form-control
-       {:on-change (fn [e]
+       {:value (:feeling belief)
+        :on-change (fn [e]
                      (let [s (-> e .-target forms/getValue)]
                        (swap! ui-state assoc-in
-                              [:adding-belief :feeling]
+                              [ui-state-key :feeling]
                               (keyword s))))}
        (for [feeling [:like :anger :fear]]
          [:option {:key feeling
-                   :value feeling
-                   :selected (if (= feeling (:feeling belief)) "selected")
-                   }
+                   :value feeling}
           (case feeling
             :like "likes"
             :anger "angry with"
@@ -136,18 +146,24 @@
        ]
       ;; object
       [:select.form-control
-       {:on-change (fn [e]
+       {:value (or (:object belief) " ")
+        :on-change (fn [e]
                      (let [s (-> e .-target forms/getValue)]
                        (swap! ui-state assoc-in
-                              [:adding-belief :object]
-                              (when (seq s) (keyword s)))))}
-       (for [person (cons "" people)]
+                              [ui-state-key :object]
+                              (when-not (str/blank? s) (keyword s)))))}
+       (for [person (cons " " people)]
          [:option {:key person
-                   :value person
-                   :selected (if (= person (:object belief)) "selected")
-                   }
+                   :value person}
           (name person)])
-       ]]
+       ]]))
+
+(defn add-belief-pane
+  [app-state ui-state]
+  (let [belief (:adding-belief @ui-state)
+        db (:db @app-state)]
+    [:div.form-inline.well
+     (belief-input ui-state :adding-belief db (:playing-as @ui-state))
      ;; add button
      [:button.btn.btn-default
       {:on-click
@@ -158,7 +174,9 @@
            (swap! ui-state assoc-in [:adding-belief :object] nil)))
        :disabled (when (or (not (:subject belief))
                            (not (:object belief))
-                           (:encounter @app-state))
+                           (= (:subject belief) (:object belief))
+                           (:encounter @app-state)
+                           (:interactive @app-state))
                    "disabled")}
       "Add feeling"]]))
 
@@ -338,44 +356,29 @@
               " some goss. "
               "So " (he-she db speaker) " lies,")]])
      ;; valid gossip, if any
-     [:p
-      [:b (str spe ": ")]
-      (str (if gossip
-             (narr/phrase-gossip db speaker listener gossip)
-             (rand-nth narr/no-gossip-phrases)))]
-     ;; response
-     (cond
-       ;; lie correction and reaction, if any
-       exposed-lie?
-       (let [source (:belief/object reaction)]
-         [:p
-          [:b (str lis ": ")]
-          (str "That's a lie!"
-               (if (= :like (:belief/feeling gossip))
-                 (str " I don't like " (him-her db (:belief/object gossip)) ".")
-                 (when existing
-                   (str " " (narr/phrase-belief db existing listener speaker))))
-               " "
-               (-> (rand-nth narr/lie-response-phrases)
-                   (replacem {"SOURCE" (name source)})))])
-       ;; note existing belief that was replaced, if any
-       existing
-       [:p
-        [:b (str lis ": ")]
-        (-> (rand-nth narr/correction-response-phrases)
-            (replacem {"OLDBELIEF" (narr/phrase-belief db existing listener speaker)}))
+     (if gossip
+       [:div
+        [:p
+         [:b (str spe ": ")]
+         (narr/phrase-gossip db speaker listener gossip)
+         ]
+        ;; response
+        [:p
+         [:b (str lis ": ")]
+         (narr/phrase-response db speaker listener gossip (assoc part :news? true))
+         ]
         ]
        ;; no gossip
-       (not gossip)
-       (when owing-after?
-         [:p
-          [:b (str lis ": ")]
-          (rand-nth narr/no-gossip-response-phrases)])
-       ;; otherwise
-       :else
-       [:p
-        [:b (str lis ": ")]
-        (str reply)])
+       [:div
+        [:p
+         [:b (str spe ": ")]
+         (rand-nth narr/no-gossip-phrases)
+         ]
+        (when owing-after?
+          [:p
+           [:b (str lis ": ")]
+           (rand-nth narr/no-gossip-response-phrases)])]
+       )
      ;; minor news, if any - stuff the listener didn't know that speaker knew
      (when-let [minor (seq (:minor-news part))]
        [:div
@@ -408,132 +411,307 @@
        ]]
      ]))
 
+(defn avatar-float
+  [db person float]
+  (let [ava (:person/avatar
+             (d/pull db '[*] [:person/id person]))]
+    [:div
+     {:style {:float float
+              :padding "1em"
+              :margin (case float
+                        "left" "0 1em 1em 0"
+                        "right" "0 0 1em 1em")
+              :background "#eee"
+              :border "1px solid #ddd"
+              :border-radius "33%"}}
+     [:div.text-center {:style {:font-size "5em"}}
+      ava]
+     [:h4.text-center (name person)]
+     ]))
+
+(defn interactive-attempt
+  [state subject object feeling]
+  (let [ienc (:interactive state)
+        {:keys [db player partner meet-str attempts]} ienc
+        belief* {:belief/person player
+                 :belief/mind player
+                 :belief/subject subject
+                 :belief/object object
+                 :belief/feeling feeling}
+        existing (gossip/existing-belief db belief*)
+        belief (if existing
+                 existing
+                 (assoc belief*
+                        :belief/lie? true
+                        :belief/fabricator player))
+        result (gossip/goss-result db player partner belief)
+        attempt [(assoc belief :phrased
+                        (narr/phrase-gossip db player partner belief))
+                 (assoc result :phrased
+                        (narr/phrase-response db player partner belief result))]
+        ;; if gossip was successful, clear player debt
+        ;; if had back-gossip (because outdated/lie), clear partner debt
+        db (cond-> (:db result)
+             (:news? result) (gossip/update-debt player partner true)
+             (:wrong? result) (gossip/update-debt partner player true))]
+    (update state :interactive
+            (fn [ienc]
+              (-> ienc
+                  (update :attempts conj attempt)
+                  (assoc :db db))))))
+
+(defn interactive-turn-pane
+  [app-state ui-state]
+  (let [db-before (:db @app-state)
+        ienc (:interactive @app-state)
+        {:keys [db player partner meet-str attempts]} ienc
+        [gossip gossip-result] (some (fn [[b m]]
+                                       (when (:news? m)
+                                         [b m]))
+                                     attempts)
+        [i-feel they-feel emo-string] (narr/my-emotional-setting db-before player partner)
+        owing (gossip/indebted db player partner)]
+    [:div
+     [:p
+      [:i
+       emo-string]]
+     [:p.lead
+      meet-str]
+     (avatar-float db player "left")
+     (into [:div]
+           (for [[belief result] attempts]
+             [:div
+              [:p
+               [:b (str (name player) ": ")]
+               (:phrased belief)]
+              ;; response
+              [:p
+               [:b (str (name partner) ": ")]
+               (:phrased result)
+               ]
+              ]))
+     (if-not (:continued ienc)
+       (let [belief (:play-belief @ui-state)
+             {:keys [subject object feeling]} belief
+             belief* {:belief/person player
+                      :belief/mind player
+                      :belief/subject subject
+                      :belief/object object
+                      :belief/feeling feeling}
+             existing (when (and subject object)
+                        (gossip/existing-belief db belief*))
+             legit? (or (not object) existing)]
+         [:div
+          [:p
+           [:b (str (name player) ": ")]
+           ]
+          [:div.form-inline
+           (belief-input ui-state :play-belief db false)
+           ;; gossip button
+           [:button.btn
+            {:class (if legit? "btn-success" "btn-warning")
+             :on-click
+             (fn [_]
+               (swap-advance! app-state interactive-attempt
+                              subject object feeling)
+               (swap! ui-state assoc-in [:play-belief :object] nil))
+             :disabled (when (or (not (:subject belief))
+                                 (not (:object belief))
+                                 (= (:subject belief) (:object belief))
+                                 (and (= (:subject belief) player)
+                                      (= (:object belief) partner)))
+                         "disabled")}
+            (if legit? "Try gossip" "Lie!")]]
+          ;; check whether in debt to listener
+          (if owing
+            [:p
+             [:i
+              (str "You owe " (name partner) " some goss. You can't skip!")]]
+            [:div.form-inline
+             ;; continue with rest of turn button
+             [:button.btn.btn-default
+              {:on-click
+               (fn [_]
+                 ;; fall into debt if didn't gossip
+                 (let [db (gossip/update-debt db player partner gossip)
+                       fwd-part (assoc gossip-result
+                                       :db db
+                                       :gossip gossip
+                                       :speaker player
+                                       :listener partner)
+                       cont (-> (gossip/continue-turn db player partner fwd-part)
+                                (gossip/partner-think))]
+                   (swap-advance! app-state assoc-in [:interactive :continued]
+                                  cont)))
+               }
+              (if gossip
+                "How about you?"
+                "I got nothing, sorry")]
+             ])
+          (avatar-float db partner "right")
+          ])
+       ;; continued turn
+       (let [enc (:continued ienc)
+             ini player
+             par partner
+             ]
+         [:div
+          (when (:gossip (:fwd-cause-part enc))
+            [:div
+             [:p
+              [:b (str (name par) ": ")]
+              "Wait, what?"]
+             (turn-part-pane (:fwd-cause-part enc)
+                             "" false)])
+          (avatar-float db partner "right")
+          (turn-part-pane (:back-part enc)
+                          (:back-reply enc)
+                          (gossip/indebted db par ini))
+          (when (:gossip (:back-cause-part enc))
+            [:div
+             [:p
+              [:b (str (name par) ": ")]
+              "Wait, what?"]
+             (turn-part-pane (:back-cause-part enc)
+                             "" false)])
+          ])
+       )]))
+
+(defn non-interactive-turn-pane
+  [enc db-before]
+  (let [db (:db enc)
+        ini (:initiator enc)
+        par (:partner enc)
+        ini-ava (:person/avatar
+                 (d/pull db '[*] [:person/id ini]))
+        par-ava (:person/avatar
+                 (d/pull db '[*] [:person/id par]))]
+    [:div
+     [:div ;.col-md-4
+      [:p
+       [:i
+        (narr/emotional-setting db-before ini par)]]
+      [:p.lead
+       (:meet-phrase enc)]
+      (avatar-float db ini "left")
+      (turn-part-pane (:fwd-part enc)
+                      (:fwd-reply enc)
+                      (gossip/indebted db ini par))
+      (when (:gossip (:fwd-cause-part enc))
+        [:div
+         [:p
+          [:b (str (name par) ": ")]
+          "Wait, what?"]
+         (turn-part-pane (:fwd-cause-part enc)
+                         "" false)])
+      ;; listener's thoughts after the interaction
+      (when-let [thoughts (seq (:fwd-thoughts enc))]
+        [:p
+         [:i
+          [:b (str (name par) " thinks: ")]
+          (->> thoughts
+               (map :belief/phrase)
+               (str/join \newline))]])
+      (avatar-float db par "right")
+      (turn-part-pane (:back-part enc)
+                      (:back-reply enc)
+                      (gossip/indebted db par ini))
+      (when (:gossip (:back-cause-part enc))
+        [:div
+         [:p
+          [:b (str (name par) ": ")]
+          "Wait, what?"]
+         (turn-part-pane (:back-cause-part enc)
+                         "" false)])
+      ;; listener's thoughts after the interaction
+      (when-let [thoughts (seq (:back-thoughts enc))]
+        [:p
+         [:i
+          [:b (str (name par) " thinks: ")]
+          (->> thoughts
+               (map :belief/phrase)
+               (str/join \newline))]])
+      ;; later thoughts
+      (when-let [thoughts (seq (:partner-thoughts enc))]
+        [:p
+         [:i
+          [:b (str (name par) " thinks: ")]
+          (->> thoughts
+               (map :belief/phrase)
+               (str/join \newline))]
+         ])
+      (when-let [thoughts (seq (:initiator-thoughts enc))]
+        [:p
+         [:i
+          [:b (str (name ini) " thinks: ")]
+          (->> thoughts
+               (map :belief/phrase)
+               (str/join \newline))]])
+      ]
+     ]))
+
 (defn encounter-pane
-  [app-state]
+  [app-state ui-state]
   (let [db (:db @app-state)
         people (gossip/all-people db)]
     [:div
      (when (and (>= (count people) 2)
-                (not (:encounter @app-state)))
+                (not (:encounter @app-state))
+                (not (:interactive @app-state)))
        [:div.row
-        [:div.col-lg-12 ;.col-md-4.col-md-offset-4
+        [:div.col-lg-12
          [:button.btn.btn-primary.btn-block
           {:on-click (fn [_]
-                       (let [turn (gossip/random-turn db)]
-                         (swap-advance! app-state assoc
-                                        :encounter (narr/narrate-turn turn)
-                                        :day (inc (:day @app-state 0)))))
+                       (if-let [player (:playing-as @ui-state)]
+                         (let [one (rand-nth people)
+                               other (gossip/random-partner db one)
+                               [ini par] (cond
+                                           (= one player) [one other]
+                                           (= other player) [other one]
+                                           :else [one other])]
+                           (if (= ini player)
+                             ;; interactive turn
+                             (swap-advance! app-state assoc
+                                            :interactive (init-interactive
+                                                          db ini par)
+                                            :day (inc (:day @app-state 0)))
+                             ;; not our turn
+                             (let [turn (gossip/turn db ini par)]
+                               (swap-advance! app-state assoc
+                                             :encounter (narr/narrate-turn turn)
+                                             :day (inc (:day @app-state 0)))))
+                           )
+                         ;; not playing
+                         (let [turn (gossip/random-turn db)]
+                           (swap-advance! app-state assoc
+                                          :encounter (narr/narrate-turn turn)
+                                          :day (inc (:day @app-state 0))))))
            }
-          "New encounter"
+          "Next encounter"
           ]]])
-     (when (:encounter @app-state)
+     (when (or (:encounter @app-state)
+               (:continued (:interactive @app-state)))
        [:div.row
-        [:div.col-lg-12 ;.col-md-4.col-md-offset-4
+        [:div.col-lg-12
          [:button.btn.btn-success.btn-block
           {:on-click (fn [_]
-                       (if-let [enc (:encounter @app-state)]
+                       (if-let [enc (or (:encounter @app-state)
+                                        (:continued (:interactive @app-state)))]
                          (swap-advance! app-state assoc
                                         :db (:db enc)
-                                        :encounter nil)))
+                                        :encounter nil
+                                        :interactive nil)))
            }
           "Continue"
           ]]])
+     (when (:interactive @app-state)
+       (interactive-turn-pane app-state ui-state))
      (when-let [enc (:encounter @app-state)]
-       (let [ini (:initiator enc)
-             par (:partner enc)
-             ini-ava (:person/avatar
-                      (d/pull db '[*] [:person/id ini]))
-             par-ava (:person/avatar
-                      (d/pull db '[*] [:person/id par]))]
-         [:div
-          [:div ;.col-md-4
-           [:p
-            [:i
-             (narr/emotional-setting db ini par)]]
-           [:p.lead
-            (:meet-phrase enc)]
-           [:div
-            {:style {:float "left"
-                     :padding "1em"
-                     :margin "0 1em 1em 0"
-                     :background "#eee"
-                     :border "1px solid #ddd"
-                     :border-radius "33%"}}
-            [:div.text-center {:style {:font-size "5em"}}
-             ini-ava]
-            [:h4.text-center (name ini)]
-            ]
-           (turn-part-pane (:fwd-part enc)
-                           (:fwd-reply enc)
-                           (gossip/indebted (:db enc) ini par))
-           (when (:gossip (:fwd-cause-part enc))
-             [:div
-              [:p
-               [:i
-                [:b (str (name par) ": ")]
-                "Wait, what?"]]
-              (turn-part-pane (:fwd-cause-part enc)
-                              "" false)])
-           ;; listener's thoughts after the interaction
-           (when-let [thoughts (seq (:fwd-thoughts enc))]
-             [:p
-              [:i
-               [:b (str (name par) " thinks: ")]
-               (->> thoughts
-                    (map :belief/phrase)
-                    (str/join \newline))]])
-           [:div
-            {:style {:float "right"
-                     :padding "1em"
-                     :margin "0 0 1em 1em"
-                     :background "#eee"
-                     :border "1px solid #ddd"
-                     :border-radius "33%"}}
-            [:div.text-center {:style {:font-size "5em"}}
-             par-ava]
-            [:h4.text-center (name par)]
-            ]
-           (turn-part-pane (:back-part enc)
-                           (:back-reply enc)
-                           (gossip/indebted (:db enc) par ini))
-           (when (:gossip (:back-cause-part enc))
-             [:div
-              [:p
-               [:i
-                [:b (str (name par) ": ")]
-                "Wait, what?"]]
-              (turn-part-pane (:back-cause-part enc)
-                              "" false)])
-           ;; listener's thoughts after the interaction
-           (when-let [thoughts (seq (:back-thoughts enc))]
-             [:p
-              [:i
-               [:b (str (name par) " thinks: ")]
-               (->> thoughts
-                    (map :belief/phrase)
-                    (str/join \newline))]])
-           ;; later thoughts
-           (when-let [thoughts (seq (:partner-thoughts enc))]
-             [:p
-              [:i
-               [:b (str (name par) " thinks: ")]
-               (->> thoughts
-                    (map :belief/phrase)
-                    (str/join \newline))]
-              ])
-           (when-let [thoughts (seq (:initiator-thoughts enc))]
-             [:p
-              [:i
-               [:b (str (name ini) " thinks: ")]
-               (->> thoughts
-                    (map :belief/phrase)
-                    (str/join \newline))]])
-           ]
-          ]))
+       (non-interactive-turn-pane enc db))
      ]))
 
 (defn navbar
-  [app-state]
+  [app-state ui-state]
   [:nav.navbar.navbar-default
    [:div.container-fluid
     [:div.navbar-header
@@ -573,6 +751,28 @@
       [:li
        [:p.navbar-text
         (str " Day " (:day @app-state))]]
+      ;; playing as
+      (let [db (:db @app-state)
+            people (gossip/all-people db)]
+        [:form.navbar-form.navbar-left
+         [:div.form-group
+          [:label
+           "Playing as: "]
+          [:select.form-control
+           {:value (name (or (:playing-as @ui-state) "not playing"))
+            :on-change (fn [e]
+                         (let [s (-> e .-target forms/getValue)
+                               new-as (when-not (= s "not playing") (keyword s))]
+                           (swap! ui-state assoc
+                                  :playing-as new-as)
+                           (when new-as
+                             (swap! ui-state assoc-in
+                                    [:adding-belief :subject] new-as))))}
+           (for [person (cons "not playing" people)]
+             [:option {:key (name person)
+                       :value (name person)}
+              (name person)])
+           ]]])
       ]
      ;; right-aligned items
      [:ul.nav.navbar-nav.navbar-right
@@ -586,7 +786,7 @@
 (defn app-pane
   [app-state ui-state]
   [:div
-   [navbar app-state]
+   [navbar app-state ui-state]
    [:div.container-fluid
     [:div.row
      [:div.col-lg-6
@@ -597,7 +797,7 @@
      [:div.col-lg-8.col-md-6
       [status-pane app-state ui-state]]
      [:div.col-lg-4.col-md-6
-      [encounter-pane app-state]]]
+      [encounter-pane app-state ui-state]]]
     ]
    ])
 

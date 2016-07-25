@@ -8,10 +8,15 @@
             #?(:cljs [goog.string :as gstring :refer [format]])
             #?(:cljs [goog.string.format])))
 
-(def meeting-phrases
-  ["At a party that night, SPE walks up to LIS and talks to HIM/HER."
-   "The next day, SPE sees LIS at the park."
-   "In maths class, SPE passes a note to LIS."])
+(defn meeting-phrase
+  [db initiator partner]
+  (-> ["At a party that night, SPE walks up to LIS and talks to HIM/HER."
+       "The next day, SPE sees LIS at the park."
+       "In maths class, SPE passes a note to LIS."]
+      (rand-nth)
+      (replacem {"SPE" (name initiator)
+                 "LIS" (name partner)
+                 "HIM/HER" (him-her db partner)})))
 
 (def message-prefixes
   ["Did you know?"
@@ -170,6 +175,39 @@
         ]
     (str/join \newline [message-prefix message-str explain-str source-str])))
 
+(defn phrase-response
+  [db speaker listener gossip
+   {:keys [news? wrong? exposed-lie? reaction existing minor-news?]
+    :as response}]
+  (cond
+    ;; lie correction and reaction, if any
+    exposed-lie?
+    (let [source (:belief/object reaction)]
+      (str "That's a lie!"
+           (if (= :like (:belief/feeling gossip))
+             (str " I don't like " (him-her db (:belief/object gossip)) ".")
+             (when existing
+               (str " " (phrase-belief db existing listener speaker))))
+           " "
+           (-> (rand-nth lie-response-phrases)
+               (replacem {"SOURCE" (name source)}))))
+    ;; correcting outdated
+    wrong?
+    (-> (rand-nth correction-phrases)
+        (replacem {"CORRECT" (phrase-belief db existing listener speaker)}))
+    ;; note existing belief that was replaced, if any
+    existing
+    (-> (rand-nth correction-response-phrases)
+        (replacem {"OLDBELIEF" (phrase-belief db existing listener speaker)}))
+    ;; gossip
+    news?
+    (rand-nth positive-response-phrases)
+    minor-news?
+    "Oh, you heard that too, huh?"
+    :else
+    "Yeah yeah, I know."
+    ))
+
 (defn my-emotional-setting
   "Returns
   [i-feel they-feel emo-string]
@@ -187,7 +225,6 @@
                    (feels-for ?e ?mind ?mind ?x ?mind _)]
         stance (d/q stance-q db initiator partner gossip/dbrules)
         versus (d/q versus-q db initiator partner gossip/dbrules)
-        actual-versus (d/q stance-q db partner initiator gossip/dbrules)
         no-stance {:belief/subject initiator, :belief/object partner :belief/feeling :none}
         no-versus {:belief/subject partner, :belief/object initiator :belief/feeling :none}
         vs (case [(:belief/feeling stance :none)
@@ -198,15 +235,12 @@
              [:anger :anger] "and"
              [:none :none] "and"
              ;; otherwise:
-             "but")
-        vs-correct? (= (:belief/feeling versus :none)
-                       (:belief/feeling actual-versus :none))]
+             "but")]
     [(:belief/feeling stance :none)
      (:belief/feeling versus :none)
      (str
       (phrase-belief db (or stance no-stance) nil nil)
-      ".. " vs
-      (if vs-correct? " knows " " thinks ")
+      ".. " vs " thinks "
       (-> (phrase-belief db (or versus no-versus) nil nil)
           (replacem {(name initiator) (him-her db initiator)}))
       )]))
@@ -261,10 +295,7 @@
            initiator partner]
     :as turn}]
   (let [
-        meet-str (-> (rand-nth meeting-phrases)
-                     (replacem {"SPE" (name initiator)
-                                "LIS" (name partner)
-                                "HIM/HER" (him-her db partner)}))
+        meet-str (meeting-phrase db initiator partner)
         fwd-reply (when (:gossip fwd-part)
                     (if (contains? #{:anger :fear}
                                    (:belief/feeling (first fwd-thoughts)))

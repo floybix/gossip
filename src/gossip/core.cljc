@@ -666,7 +666,45 @@
                :back-gossip back-gossip
                :minor-news minor-news)))))
 
-(defn turn
+(defn continue-turn
+  [db initiator partner fwd-part]
+  (let [;; listener learns cause too (another belief)
+        ;; TODO: hide cause if it is a direct feeling / or own lie
+        fwd-cause-part (when-let [cause-ref (:belief/cause (:gossip fwd-part))]
+                         (let [cause (d/pull db '[*] (:db/id cause-ref))]
+                           (println "fwd cause " cause)
+                           (turn-part db initiator partner
+                                      [(dissoc cause :belief/source :belief/cause)])))
+        db (if fwd-cause-part (:db fwd-cause-part) db)
+        ;; partner speaks (think first)
+        [db partner-thoughts1] (think db partner)
+        back-part (turn-part db partner initiator
+                             (prioritised-potential-gossip db partner initiator))
+        db (:db back-part)
+        ;; listener learns cause too (another belief)
+        back-cause-part (when-let [cause-ref (:belief/cause (:gossip back-part))]
+                         (let [cause (d/pull db '[*] (:db/id cause-ref))]
+                           (println "back cause " cause-ref)
+                           (turn-part db partner initiator
+                                      [(dissoc cause :belief/source :belief/cause)])))
+        db (if back-cause-part (:db back-cause-part) db)
+        ;; update debts
+        db (update-debt db initiator partner (or (:gossip fwd-part)
+                                                 (seq (:back-gossip back-part))))
+        db (update-debt db partner initiator (or (:gossip back-part)
+                                                 (seq (:back-gossip fwd-part))))
+        ]
+    {:db db
+     :fwd-part fwd-part
+     :back-part back-part
+     :fwd-cause-part fwd-cause-part
+     :back-cause-part back-cause-part
+     :initiator initiator
+     :partner partner
+     :fwd-thoughts partner-thoughts1
+     }))
+
+(defn turn*
   "Person has a turn being the initiator of an encounter.
 
   Play proceeds as follows:
@@ -711,9 +749,8 @@
   :fwd-part
   :back-part
   "
-  [db initiator]
-  (let [partner (random-partner db initiator)
-        ;; initiator speaks
+  [db initiator partner]
+  (let [;; initiator speaks
         fwd-part (turn-part db initiator partner
                             (prioritised-potential-gossip db initiator partner))
         db (:db fwd-part)
@@ -722,59 +759,57 @@
                    (:exposed-lie? fwd-part))
              (update-debt db partner initiator true)
              db)
-        ;; listener learns cause too (another belief)
-        ;; TODO: hide cause if it is a direct feeling / or own lie
-        fwd-cause-part (when-let [cause-ref (:belief/cause (:gossip fwd-part))]
-                         (let [cause (d/pull db '[*] (:db/id cause-ref))]
-                           (println "fwd cause " cause)
-                           (turn-part db initiator partner
-                                      [(dissoc cause :belief/source :belief/cause)])))
-        db (if fwd-cause-part (:db fwd-cause-part) db)
-        ;; partner speaks (think first)
-        [db partner-thoughts1] (think db partner)
-        back-part (turn-part db partner initiator
-                             (prioritised-potential-gossip db partner initiator))
-        db (:db back-part)
-        ;; listener learns cause too (another belief)
-        back-cause-part (when-let [cause-ref (:belief/cause (:gossip back-part))]
-                         (let [cause (d/pull db '[*] (:db/id cause-ref))]
-                           (println "back cause " cause-ref)
-                           (turn-part db partner initiator
-                                      [(dissoc cause :belief/source :belief/cause)])))
-        db (if back-cause-part (:db back-cause-part) db)
-        ;; update debts
-        db (update-debt db initiator partner (or (:gossip fwd-part)
-                                                 (seq (:back-gossip back-part))))
-        db (update-debt db partner initiator (or (:gossip back-part)
-                                                 (seq (:back-gossip fwd-part))))
+        ]
+    (continue-turn db initiator partner fwd-part)))
+
+(defn initiator-think
+  [turn]
+  (let [{:keys [db initiator]} turn
         ;; do some thinking
         [db initiat-thoughts1] (think db initiator)
-        [db partner-thoughts2] (think db partner)
         ;; there might be more thoughts that can derived now:
         [db initiat-thoughts2] (if initiat-thoughts1
                                  (think db initiator)
                                  [db nil])
+        ;; ok let's not go crazy... stop now.
+        ]
+    (assoc turn
+           :db db
+           :back-thoughts initiat-thoughts1
+           :initiator-thoughts initiat-thoughts2)))
+
+(defn partner-think
+  [turn]
+  (let [{:keys [db partner]} turn
+        partner-thoughts1 (:fwd-thoughts turn)
+        ;; do some thinking
+        [db partner-thoughts2] (think db partner)
+        ;; there might be more thoughts that can derived now:
         [db partner-thoughts3] (if partner-thoughts2
                                  (think db partner)
                                  [db nil])
         ;; ok let's not go crazy... stop now.
         ]
-    {:db db
-     :fwd-part fwd-part
-     :back-part back-part
-     :fwd-cause-part fwd-cause-part
-     :back-cause-part back-cause-part
-     :initiator initiator
-     :partner partner
-     :fwd-thoughts partner-thoughts1
-     :back-thoughts initiat-thoughts1
-     :initiator-thoughts initiat-thoughts2
-     :partner-thoughts (concat partner-thoughts2
-                               partner-thoughts3)
-     }))
+    (assoc turn
+           :db db
+           :fwd-thoughts partner-thoughts1
+           :partner-thoughts (concat partner-thoughts2
+                                     partner-thoughts3))))
+
+(defn turn-think
+  [turn]
+  (-> turn
+      (partner-think)
+      (initiator-think)))
+
+(defn turn
+  [db initiator partner]
+  (-> (turn* db initiator partner)
+      (turn-think)))
 
 (defn random-turn
   [db]
   (let [people (all-people db)
-        initiator (rand-nth people)]
-    (turn db initiator)))
+        initiator (rand-nth people)
+        partner (random-partner db initiator)]
+    (turn db initiator partner)))
