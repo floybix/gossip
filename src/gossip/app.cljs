@@ -305,13 +305,12 @@
               ]))]))
 
 (defn turn-part-pane
-  [part thoughts reply]
+  [part reply owing-after?]
   (let [{:keys [speaker listener gossip existing reaction exposed-lie?]} part
         db (:db-before part)
         spe (name speaker)
         lis (name listener)
-        owing-before (gossip/indebted db speaker listener)
-        owing-after (gossip/indebted (:db-after part) speaker listener)]
+        owing-before? (gossip/indebted db speaker listener)]
     [:div
      ;; back-gossip if any - i.e. correcting outdated beliefs
      (when-let [backgoss (seq (:back-gossip part))]
@@ -331,7 +330,7 @@
           )))
      ;; the valid gossip if any (or the belief which was exposed as a lie)
      ;; first, prefix when owing:
-     (when (and owing-before
+     (when (and owing-before?
                 (= speaker (:belief/fabricator gossip)))
        [:p
         [:i
@@ -368,7 +367,7 @@
         ]
        ;; no gossip
        (not gossip)
-       (when owing-after
+       (when owing-after?
          [:p
           [:b (str lis ": ")]
           (rand-nth narr/no-gossip-response-phrases)])
@@ -397,14 +396,6 @@
              (rand-nth narr/embarrassed-phrases)
              (rand-nth narr/minor-news-response-phrases)))]
         ])
-     ;; listener's thoughts after the interaction
-     (when (seq thoughts)
-       [:p
-        [:i
-         [:b (str lis " thinks: ")]
-         (->> thoughts
-              (map :belief/phrase)
-              (str/join \newline))]])
      [:div.bg-success
       [:h5 "DATA"]
       [:ul
@@ -448,17 +439,17 @@
           "Continue"
           ]]])
      (when-let [enc (:encounter @app-state)]
-       (let [ini (name (:initiator enc))
-             par (name (:partner enc))
+       (let [ini (:initiator enc)
+             par (:partner enc)
              ini-ava (:person/avatar
-                      (d/pull db '[*] [:person/id (:initiator enc)]))
+                      (d/pull db '[*] [:person/id ini]))
              par-ava (:person/avatar
-                      (d/pull db '[*] [:person/id (:partner enc)]))]
+                      (d/pull db '[*] [:person/id par]))]
          [:div
           [:div ;.col-md-4
            [:p
             [:i
-             (narr/emotional-setting db (:initiator enc) (:partner enc))]]
+             (narr/emotional-setting db ini par)]]
            [:p.lead
             (:meet-phrase enc)]
            [:div
@@ -470,11 +461,27 @@
                      :border-radius "33%"}}
             [:div.text-center {:style {:font-size "5em"}}
              ini-ava]
-            [:h4.text-center ini]
+            [:h4.text-center (name ini)]
             ]
            (turn-part-pane (:fwd-part enc)
-                           (:fwd-thoughts enc)
-                           (:fwd-reply enc))
+                           (:fwd-reply enc)
+                           (gossip/indebted (:db enc) ini par))
+           (when (:gossip (:fwd-cause-part enc))
+             [:div
+              [:p
+               [:i
+                [:b (str (name par) ": ")]
+                "Wait, what?"]]
+              (turn-part-pane (:fwd-cause-part enc)
+                              "" false)])
+           ;; listener's thoughts after the interaction
+           (when-let [thoughts (seq (:fwd-thoughts enc))]
+             [:p
+              [:i
+               [:b (str (name par) " thinks: ")]
+               (->> thoughts
+                    (map :belief/phrase)
+                    (str/join \newline))]])
            [:div
             {:style {:float "right"
                      :padding "1em"
@@ -484,15 +491,32 @@
                      :border-radius "33%"}}
             [:div.text-center {:style {:font-size "5em"}}
              par-ava]
-            [:h4.text-center par]
+            [:h4.text-center (name par)]
             ]
            (turn-part-pane (:back-part enc)
-                           (:back-thoughts enc)
-                           (:back-reply enc))
+                           (:back-reply enc)
+                           (gossip/indebted (:db enc) par ini))
+           (when (:gossip (:back-cause-part enc))
+             [:div
+              [:p
+               [:i
+                [:b (str (name par) ": ")]
+                "Wait, what?"]]
+              (turn-part-pane (:back-cause-part enc)
+                              "" false)])
+           ;; listener's thoughts after the interaction
+           (when-let [thoughts (seq (:back-thoughts enc))]
+             [:p
+              [:i
+               [:b (str (name par) " thinks: ")]
+               (->> thoughts
+                    (map :belief/phrase)
+                    (str/join \newline))]])
+           ;; later thoughts
            (when-let [thoughts (seq (:partner-thoughts enc))]
              [:p
               [:i
-               [:b (str par " thinks: ")]
+               [:b (str (name par) " thinks: ")]
                (->> thoughts
                     (map :belief/phrase)
                     (str/join \newline))]
@@ -500,13 +524,12 @@
            (when-let [thoughts (seq (:initiator-thoughts enc))]
              [:p
               [:i
-               [:b (str ini " thinks: ")]
+               [:b (str (name ini) " thinks: ")]
                (->> thoughts
                     (map :belief/phrase)
                     (str/join \newline))]])
            ]
           ]))
-
      ]))
 
 (defn navbar

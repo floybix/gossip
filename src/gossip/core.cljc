@@ -124,40 +124,6 @@
                     :belief/object])
        dbrules))
 
-(defn find-news
-  "Finds all beliefs that the listener holds but the speaker does not
-  already know (what they actually know, not just what the speaker
-  thinks they know). Returns a lazy sequence in random order.
-  Leaves out anything the speaker feels directly for the listener!"
-  [db speaker listener]
-  ;; there are two cases:
-  ;; 1. the listener has no record of the relationship.
-  ;; 2. the listener knows of the relationship with different feeling.
-  (let [bs (d/q '[:find [(pull ?e [*]) ...]
-                  :in $ ?spe ?lis %
-                  :where
-                  (feels-for ?e ?spe ?spe ?subj ?obj _)
-                  [(not (and (= ?subj ?spe)
-                             (= ?obj ?lis)))]
-                  ]
-                db speaker listener dbrules)
-        ]
-    (->>
-     (shuffle bs)
-     (map (fn [belief]
-            ;; check whether listener already knows this
-            (let [their (assoc belief
-                               :belief/person listener
-                               :belief/mind listener)
-                  their-existing-belief (existing-belief db their)]
-              (if (= (:belief/feeling their-existing-belief)
-                     (:belief/feeling belief))
-                ;; already known, skip
-                nil
-                ;; got one
-                belief))))
-     (remove nil?))))
-
 (defn replacement-beliefs
   [db new-beliefs]
   (->> new-beliefs
@@ -422,7 +388,11 @@
   [db person]
   (let [thoughts (derive-beliefs db person person)]
     [(if (seq thoughts)
-       (d/db-with db (replacement-beliefs db thoughts))
+       ;;(d/db-with db (replacement-beliefs db thoughts))
+       ;; avoid duplicate beliefs - replace one at a time
+       (reduce (fn [db b]
+                 (d/db-with db (replacement-beliefs db [b])))
+               db thoughts)
        db)
      thoughts]))
 
@@ -547,12 +517,17 @@
   :minor-news?
   "
   [db speaker listener belief]
-  (let [orig-source (:belief/source belief)
+  (let [source (:belief/source belief)
         belief (assoc belief :belief/source speaker)
         subj (:belief/subject belief)
         lis-fact (assoc belief
                         :belief/person listener
                         :belief/mind listener)
+        ;; always learn that speaker's source knows it too.
+        db (if (and source (not= source listener))
+             (let [to-apply [(assoc belief :belief/person listener :belief/mind source)]]
+               (d/db-with db (replacement-beliefs db to-apply)))
+             db)
         knew-that? (fn [mind-belief]
                      (= (:belief/feeling (existing-belief db mind-belief) :none)
                         (:belief/feeling belief :none)))
@@ -567,22 +542,22 @@
         ;; also - knowledge of the lie should pass back to speaker
         exposed-lie? (and correction? (:belief/lie? belief))]
     (if correction?
-      (let [correction (or existing
-                           {:belief/person listener
-                            :belief/mind listener
-                            :belief/subject (:belief/subject belief)
-                            :belief/object (:belief/object belief)
-                            :belief/feeling :none})
-            fixed (goss-result db listener speaker correction)
+      (let [corrected (or existing
+                          {:belief/person listener
+                           :belief/mind listener
+                           :belief/subject (:belief/subject belief)
+                           :belief/object (:belief/object belief)
+                           :belief/feeling :none})
+            fixed (goss-result db listener speaker corrected)
             db (:db fixed)]
         (if exposed-lie?
-         (let [from orig-source ; or (:belief/fabricator belief)
+         (let [from source ; or (:belief/fabricator belief)
                angry {:belief/person listener
                       :belief/mind listener
                       :belief/subject listener
                       :belief/object from
                       :belief/feeling :anger
-                      :belief/complex-cause :lie}
+                      :belief/complex-cause :lied-about-me}
                ;; if we thought they liked us before, now assume they don't.
                ;; this prevents listener from reciprocally re-liking fabricator...
                ;; TODO: need this?? might be detrimental to listener.
@@ -591,7 +566,7 @@
                        :belief/subject from
                        :belief/object listener
                        :belief/feeling :none
-                       :belief/complex-cause :lie}
+                       :belief/complex-cause :its-unfriendly-to-lie}
                waslike? (= :like (:belief/feeling (existing-belief db nolike)))
                to-apply (for [belief (if waslike? [angry nolike] [angry])
                               person [speaker listener]
@@ -640,12 +615,12 @@
   :back-gossip (in case there were corrections - beliefs new to speaker)
   :minor-news
   "
-  [db speaker listener]
+  [db speaker listener potential-gossip]
   (let [db-before db
         partial-result {:db-before db
                         :speaker speaker
                         :listener listener}]
-    (loop [all-bs (prioritised-potential-gossip db speaker listener)
+    (loop [all-bs potential-gossip
            back-gossip []
            minor-news []
            db db]
@@ -739,17 +714,34 @@
   [db initiator]
   (let [partner (random-partner db initiator)
         ;; initiator speaks
-        fwd-part (turn-part db initiator partner)
+        fwd-part (turn-part db initiator partner
+                            (prioritised-potential-gossip db initiator partner))
         db (:db fwd-part)
         ;; if had back-gossip, clear partner debt before next part
         db (if (or (seq (:back-gossip fwd-part))
                    (:exposed-lie? fwd-part))
              (update-debt db partner initiator true)
              db)
+        ;; listener learns cause too (another belief)
+        ;; TODO: hide cause if it is a direct feeling / or own lie
+        fwd-cause-part (when-let [cause-ref (:belief/cause (:gossip fwd-part))]
+                         (let [cause (d/pull db '[*] (:db/id cause-ref))]
+                           (println "fwd cause " cause)
+                           (turn-part db initiator partner
+                                      [(dissoc cause :belief/source :belief/cause)])))
+        db (if fwd-cause-part (:db fwd-cause-part) db)
         ;; partner speaks (think first)
         [db partner-thoughts1] (think db partner)
-        back-part (turn-part db partner initiator)
+        back-part (turn-part db partner initiator
+                             (prioritised-potential-gossip db partner initiator))
         db (:db back-part)
+        ;; listener learns cause too (another belief)
+        back-cause-part (when-let [cause-ref (:belief/cause (:gossip back-part))]
+                         (let [cause (d/pull db '[*] (:db/id cause-ref))]
+                           (println "back cause " cause-ref)
+                           (turn-part db partner initiator
+                                      [(dissoc cause :belief/source :belief/cause)])))
+        db (if back-cause-part (:db back-cause-part) db)
         ;; update debts
         db (update-debt db initiator partner (or (:gossip fwd-part)
                                                  (seq (:back-gossip back-part))))
@@ -770,6 +762,8 @@
     {:db db
      :fwd-part fwd-part
      :back-part back-part
+     :fwd-cause-part fwd-cause-part
+     :back-cause-part back-cause-part
      :initiator initiator
      :partner partner
      :fwd-thoughts partner-thoughts1

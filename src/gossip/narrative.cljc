@@ -104,30 +104,45 @@
         explain-str (cond
                       ;; a simple cause
                       (:belief/cause belief)
-                      (let [cause-e (:belief/cause belief)
-                            cause (d/pull db '[*] (:db/id cause-e))]
+                      (let [cause-ref (:belief/cause belief)
+                            cause (d/pull db '[*] (:db/id cause-ref))]
                         (when (:belief/feeling cause)
                           (str "It all started because "
                                (phrase-belief db cause speaker listener))))
                       ;; a complex cause
                       (:belief/complex-cause belief)
                       (let [cc (:belief/complex-cause belief)]
-                        (prn "obj " obj listener)
-                        (prn speaker listener belief)
                         (cond
-                          (= cc :lie)
+                          (= cc :lied-about-me)
                           (replacem "It's because OBJ spread lies about SUBJ."
                                     {"OBJ" (cond
                                              (= obj speaker) "I"
                                              (= obj listener) "you"
                                              :else (he-she db obj))
-                                     "SUBJ" (case subj
-                                              speaker "me"
-                                              listener "you"
-                                              (name subj))})
+                                     "SUBJ" (cond
+                                              (= subj speaker) "me"
+                                              (= subj listener) "you"
+                                              :else (name subj))})
+                          (= cc :its-unfriendly-to-lie)
+                          (replacem "OBJ knows that because SUBJ spread lies about THEM."
+                                    {"OBJ" (cond
+                                             (= obj speaker) "I"
+                                             (= obj listener) "you"
+                                             :else (name obj))
+                                     "THEM" (cond
+                                              (= obj speaker) "me"
+                                              (= obj listener) "you"
+                                              :else (him-her db obj))
+                                     "SUBJ" (cond
+                                              (= subj speaker) "I"
+                                              (= subj listener) "you"
+                                              :else (name subj))})
                           (= cc :popularity)
-                          (replacem "It's because HE/SHE is popular."
-                                    {"HE/SHE" (he-she db obj)})
+                          (replacem "It's because OBJIS so cool."
+                                    {"OBJIS" (cond
+                                               (= obj speaker) "they think I'm"
+                                               (= obj listener) "you're"
+                                               :else (he-she db obj))})
                           :else
                           (str "It's because " cc)))
                       ;; otherwise - no or unknown/outdated cause
@@ -172,6 +187,7 @@
                    (feels-for ?e ?mind ?mind ?x ?mind _)]
         stance (d/q stance-q db initiator partner gossip/dbrules)
         versus (d/q versus-q db initiator partner gossip/dbrules)
+        actual-versus (d/q stance-q db partner initiator gossip/dbrules)
         no-stance {:belief/subject initiator, :belief/object partner :belief/feeling :none}
         no-versus {:belief/subject partner, :belief/object initiator :belief/feeling :none}
         vs (case [(:belief/feeling stance :none)
@@ -182,12 +198,15 @@
              [:anger :anger] "and"
              [:none :none] "and"
              ;; otherwise:
-             "but")]
+             "but")
+        vs-correct? (= (:belief/feeling versus :none)
+                       (:belief/feeling actual-versus :none))]
     [(:belief/feeling stance :none)
      (:belief/feeling versus :none)
      (str
       (phrase-belief db (or stance no-stance) nil nil)
-      ".. " vs " thinks "
+      ".. " vs
+      (if vs-correct? " knows " " thinks ")
       (-> (phrase-belief db (or versus no-versus) nil nil)
           (replacem {(name initiator) (him-her db initiator)}))
       )]))
