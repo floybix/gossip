@@ -683,10 +683,11 @@
         db (:db back-part)
         ;; listener learns cause too (another belief)
         back-cause-part (when-let [cause-ref (:belief/cause (:gossip back-part))]
-                         (let [cause (d/pull db '[*] (:db/id cause-ref))]
-                           (println "back cause " cause-ref)
-                           (turn-part db partner initiator
-                                      [(dissoc cause :belief/source :belief/cause)])))
+                          (let [cause (d/pull db '[*] (:db/id cause-ref))]
+                            (println "gossip" (:gossip back-part))
+                            (println "back cause " cause)
+                            (turn-part db partner initiator
+                                       [(dissoc cause #_:belief/source :belief/cause)])))
         db (if back-cause-part (:db back-cause-part) db)
         ;; update debts
         db (update-debt db initiator partner (or (:gossip fwd-part)

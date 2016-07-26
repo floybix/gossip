@@ -104,8 +104,7 @@
                                       :person/gender gender
                                       :person/avatar avatar}])
            (swap! ui-state assoc-in [:adding-person :name] "")))
-       :disabled (when (or (str/blank? (:name person))
-                           (:encounter @app-state))
+       :disabled (when (str/blank? (:name person))
                    "disabled")}
       "Add person"]]))
 
@@ -136,13 +135,14 @@
                        (swap! ui-state assoc-in
                               [ui-state-key :feeling]
                               (keyword s))))}
-       (for [feeling [:like :anger :fear]]
+       (for [feeling [:like :anger :fear :none]]
          [:option {:key feeling
                    :value feeling}
           (case feeling
             :like "likes"
             :anger "angry with"
-            :fear "fears")])
+            :fear "fears"
+            :none "doesn't care about")])
        ]
       ;; object
       [:select.form-control
@@ -174,16 +174,15 @@
            (swap! ui-state assoc-in [:adding-belief :object] nil)))
        :disabled (when (or (not (:subject belief))
                            (not (:object belief))
-                           (= (:subject belief) (:object belief))
-                           (:encounter @app-state)
-                           (:interactive @app-state))
+                           (= (:subject belief) (:object belief)))
                    "disabled")}
-      "Add feeling"]]))
+      "Add/replace feeling"]]))
 
 (defn status-pane
   [app-state ui-state]
   (let [db (:db @app-state)
-        pov (:current-pov @ui-state)
+        playing? (:playing-as @ui-state)
+        pov (or playing? (:current-pov @ui-state))
         people (gossip/all-people db)
         belief-li (fn [mind belief]
                     (let [b-mind (:belief/mind belief)
@@ -194,7 +193,9 @@
                        {:class (cond
                                  (:missing? belief)
                                  "text-muted"
-                                 (:belief/lie? belief)
+                                 (and (:belief/lie? belief)
+                                      (or (not playing?)
+                                        (= pov (:belief/fabricator pov))))
                                  "belief-lie"
                                  :else
                                  (case (:belief/feeling belief)
@@ -209,13 +210,15 @@
       [:div.col-lg-12
        (if pov
          [:p "Showing what " [:b (name pov)] " knows. "
-          [:button.btn-primary.btn-xs
-           {:on-click
-            (fn [_]
-              (swap! ui-state assoc :current-pov nil))}
-           "Show true feelings"]]
-         [:p.text-muted
-          "Click a name to show what they know:"])]]
+          (when-not playing?
+            [:button.btn-primary.btn-xs
+             {:on-click
+              (fn [_]
+                (swap! ui-state assoc :current-pov nil))}
+             "Show true feelings"])]
+         (when-not playing?
+           [:p.text-muted
+            "Click a name to show what they know:"]))]]
      (into [:div.row]
            (for [mind people
                  :let [avatar (:person/avatar
@@ -262,7 +265,7 @@
                                    db (or pov mind) mind)
                         ;; also look up this mind's actual beliefs
                         ;; - see what knowledge is missing and tag it
-                        missing (when (and pov (not= pov mind))
+                        missing (when (and pov (not= pov mind) (not playing?))
                                   (let [substance
                                         (fn [b]
                                           (select-keys b [:belief/mind
@@ -310,20 +313,26 @@
                           "I don't know who is most popular."]))]))]
                [:div.panel-footer
                 ;; how popular am i really
-                (when-let [likes (d/q gossip/my-true-popularity-q db mind)]
-                  [:p.small {:style {:white-space "nowrap"}}
-                   "Popularity " [:span.badge likes]])
+                (when-not playing?
+                  (when-let [likes (d/q gossip/my-true-popularity-q db mind)]
+                    [:p.small {:style {:white-space "nowrap"}}
+                     "Popularity " [:span.badge likes]]))
                 ;; who am i indebted to
-                (let [dto (d/q gossip/indebted-to-q db mind)]
-                  (when (seq dto)
-                    [:div.small
-                     "I owe gossip to "
-                     (str/join ", " (map name dto))])
+                (when-let [dto (cond->>
+                                   (d/q gossip/indebted-to-q db mind)
+                                 (and pov (not= mind pov)) ;; only what pov knows
+                                 (filter #(= pov %))
+                                 true
+                                 (seq)
+                                 )]
+                  [:div.small
+                   "I owe gossip to "
+                   (str/join ", " (map name dto))]
                   )]]
               ]))]))
 
 (defn turn-part-pane
-  [part reply owing-after?]
+  [part reply owing-after? playing?]
   (let [{:keys [speaker listener gossip existing reaction exposed-lie?]} part
         db (:db-before part)
         spe (name speaker)
@@ -348,7 +357,8 @@
           )))
      ;; the valid gossip if any (or the belief which was exposed as a lie)
      ;; first, prefix when owing:
-     (when (and owing-before?
+     (when (and (not playing?)
+                owing-before?
                 (= speaker (:belief/fabricator gossip)))
        [:p
         [:i
@@ -399,7 +409,7 @@
              (rand-nth narr/embarrassed-phrases)
              (rand-nth narr/minor-news-response-phrases)))]
         ])
-     [:div.bg-success
+     #_[:div.bg-success
       [:h5 "DATA"]
       [:ul
        [:li (str "gossip " (:gossip part))]
@@ -469,12 +479,14 @@
                                        (when (:news? m)
                                          [b m]))
                                      attempts)
-        [i-feel they-feel emo-string] (narr/my-emotional-setting db-before player partner)
         owing (gossip/indebted db player partner)]
     [:div
-     [:p
-      [:i
-       emo-string]]
+     (let [emo-str (narr/emotional-setting db-before player partner player)]
+       (when-not (str/blank? emo-str)
+         [:p
+          [:i
+           [:b (name player) " thinks: "]
+           emo-str]]))
      [:p.lead
       meet-str]
      (avatar-float db player "left")
@@ -491,6 +503,7 @@
                ]
               ]))
      (if-not (:continued ienc)
+       ;; this turn is still in play, interactive
        (let [belief (:play-belief @ui-state)
              {:keys [subject object feeling]} belief
              belief* {:belief/person player
@@ -500,7 +513,8 @@
                       :belief/feeling feeling}
              existing (when (and subject object)
                         (gossip/existing-belief db belief*))
-             legit? (or (not object) existing)]
+             legit? (or (not object)
+                        (= feeling (:belief/feeling existing :none)))]
          [:div
           [:p
            [:b (str (name player) ": ")]
@@ -562,22 +576,52 @@
               [:b (str (name par) ": ")]
               "Wait, what?"]
              (turn-part-pane (:fwd-cause-part enc)
-                             "" false)])
+                             "" false true)])
           (avatar-float db partner "right")
           (turn-part-pane (:back-part enc)
                           (:back-reply enc)
-                          (gossip/indebted db par ini))
+                          (gossip/indebted db par ini)
+                          true)
           (when (:gossip (:back-cause-part enc))
             [:div
              [:p
-              [:b (str (name par) ": ")]
+              [:b (str (name ini) ": ")]
               "Wait, what?"]
              (turn-part-pane (:back-cause-part enc)
-                             "" false)])
+                             "" false true)])
           ])
        )]))
 
-(defn non-interactive-turn-pane
+(defn other-turn-playing-pane
+  [enc db-before playing-as]
+  (let [db (:db enc)
+        ini (:initiator enc)
+        par (:partner enc)
+        ini-ava (:person/avatar
+                 (d/pull db '[*] [:person/id ini]))
+        par-ava (:person/avatar
+                 (d/pull db '[*] [:person/id par]))]
+    [:div
+     [:div ;.col-md-4
+      (let [emo-str (narr/emotional-setting db-before ini par playing-as)]
+        (when-not (str/blank? emo-str)
+          [:p
+           [:i
+            [:b (name playing-as) " thinks: "]
+            emo-str]]))
+      [:p.lead
+       (:meet-phrase enc)]
+      (avatar-float db ini "left")
+      [:p.text-muted
+       (apply str "Rhubarb"
+              (repeat 50 " rhubarb"))]
+      (avatar-float db par "right")
+      [:p.text-muted
+       (apply str "Rhubarb"
+              (repeat 50 " rhubarb"))]
+      ]]))
+
+(defn other-turn-not-playing-pane
   [enc db-before]
   (let [db (:db enc)
         ini (:initiator enc)
@@ -590,20 +634,22 @@
      [:div ;.col-md-4
       [:p
        [:i
-        (narr/emotional-setting db-before ini par)]]
+        (narr/emotional-setting db-before ini par nil)
+        ]]
       [:p.lead
        (:meet-phrase enc)]
       (avatar-float db ini "left")
       (turn-part-pane (:fwd-part enc)
                       (:fwd-reply enc)
-                      (gossip/indebted db ini par))
+                      (gossip/indebted db ini par)
+                      false)
       (when (:gossip (:fwd-cause-part enc))
         [:div
          [:p
           [:b (str (name par) ": ")]
           "Wait, what?"]
          (turn-part-pane (:fwd-cause-part enc)
-                         "" false)])
+                         "" false false)])
       ;; listener's thoughts after the interaction
       (when-let [thoughts (seq (:fwd-thoughts enc))]
         [:p
@@ -615,14 +661,15 @@
       (avatar-float db par "right")
       (turn-part-pane (:back-part enc)
                       (:back-reply enc)
-                      (gossip/indebted db par ini))
+                      (gossip/indebted db par ini)
+                      false)
       (when (:gossip (:back-cause-part enc))
         [:div
          [:p
           [:b (str (name par) ": ")]
           "Wait, what?"]
          (turn-part-pane (:back-cause-part enc)
-                         "" false)])
+                         "" false false)])
       ;; listener's thoughts after the interaction
       (when-let [thoughts (seq (:back-thoughts enc))]
         [:p
@@ -655,7 +702,7 @@
   (let [db (:db @app-state)
         people (gossip/all-people db)]
     [:div
-     (when (and (>= (count people) 2)
+     (when (and (>= (count people) 3)
                 (not (:encounter @app-state))
                 (not (:interactive @app-state)))
        [:div.row
@@ -688,7 +735,9 @@
                                           :day (inc (:day @app-state 0))))))
            }
           "Next encounter"
-          ]]])
+          ]
+         [:p.lead
+          "You can add feelings or people now."]]])
      (when (or (:encounter @app-state)
                (:continued (:interactive @app-state)))
        [:div.row
@@ -707,7 +756,9 @@
      (when (:interactive @app-state)
        (interactive-turn-pane app-state ui-state))
      (when-let [enc (:encounter @app-state)]
-       (non-interactive-turn-pane enc db))
+       (if-let [playing-as (:playing-as @ui-state)]
+         (other-turn-playing-pane enc db playing-as)
+         (other-turn-not-playing-pane enc db)))
      ]))
 
 (defn navbar
@@ -734,19 +785,20 @@
         [:span.glyphicon.glyphicon-step-backward {:aria-hidden "true"}]
         [:span.visible-xs-inline " Step backward"]]]
       ;; step forward
-      [:li
-       [:button.btn.btn-default.navbar-btn
-        {:type :button
-         :on-click
-         (fn [_]
-           (let [new-state (peek @redo-buffer)]
-             (swap! redo-buffer pop)
-             (swap! undo-buffer conj @app-state)
-             (reset! app-state new-state)))
-         :title "Step forward in time"
-         :disabled (when (empty? @redo-buffer) "disabled")}
-        [:span.glyphicon.glyphicon-step-forward {:aria-hidden "true"}]
-        [:span.visible-xs-inline " Step forward"]]]
+      (when-not (empty? @redo-buffer)
+        [:li
+         [:button.btn.btn-default.navbar-btn
+          {:type :button
+           :on-click
+           (fn [_]
+             (let [new-state (peek @redo-buffer)]
+               (swap! redo-buffer pop)
+               (swap! undo-buffer conj @app-state)
+               (reset! app-state new-state)))
+           :title "Step forward in time"
+           :disabled (when (empty? @redo-buffer) "disabled")}
+          [:span.glyphicon.glyphicon-step-forward {:aria-hidden "true"}]
+          [:span.visible-xs-inline " Step forward"]]])
       ;; timestep
       [:li
        [:p.navbar-text
@@ -772,7 +824,18 @@
              [:option {:key (name person)
                        :value (name person)}
               (name person)])
-           ]]])
+           ]
+          ]])
+      (when (:playing-as @ui-state)
+        [:li
+         [:button.btn.btn-default.navbar-btn
+          {:type :button
+           :on-click
+           (fn [_]
+             (swap! ui-state assoc
+                    :playing-as nil))
+           }
+          "End game"]])
       ]
      ;; right-aligned items
      [:ul.nav.navbar-nav.navbar-right
@@ -788,11 +851,14 @@
   [:div
    [navbar app-state ui-state]
    [:div.container-fluid
-    [:div.row
-     [:div.col-lg-6
-      [add-person-pane app-state ui-state]]
-     [:div.col-lg-6
-      [add-belief-pane app-state ui-state]]]
+    ;; can not alter db when it will be replaced:
+    (when-not (or (:encounter @app-state)
+                  (:interactive @app-state))
+      [:div.row
+       [:div.col-lg-6
+        [add-person-pane app-state ui-state]]
+       [:div.col-lg-6
+        [add-belief-pane app-state ui-state]]])
     [:div.row
      [:div.col-lg-8.col-md-6
       [status-pane app-state ui-state]]

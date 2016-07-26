@@ -196,12 +196,13 @@
     (-> (rand-nth correction-phrases)
         (replacem {"CORRECT" (phrase-belief db existing listener speaker)}))
     ;; note existing belief that was replaced, if any
-    existing
+    (and news? existing)
     (-> (rand-nth correction-response-phrases)
         (replacem {"OLDBELIEF" (phrase-belief db existing listener speaker)}))
     ;; gossip
     news?
     (rand-nth positive-response-phrases)
+    ;; listener didn't know that speaker knew that
     minor-news?
     "Oh, you heard that too, huh?"
     :else
@@ -214,17 +215,17 @@
   where i-feel is the what the initiator feels for partner,
   they-feel is what the initiator thinks partner feels for them,
   emo-string is a string describing the initiator's beliefs."
-  [db initiator partner]
+  [db initiator partner pov]
   (let [stance-q '[:find (pull ?e [*]) .
-                   :in $ ?mind ?x %
+                   :in $ ?pov ?mind ?x %
                    :where
-                   (feels-for ?e ?mind ?mind ?mind ?x _)]
+                   (feels-for ?e ?pov ?mind ?mind ?x _)]
         versus-q '[:find (pull ?e [*]) .
-                   :in $ ?mind ?x %
+                   :in $ ?pov ?mind ?x %
                    :where
-                   (feels-for ?e ?mind ?mind ?x ?mind _)]
-        stance (d/q stance-q db initiator partner gossip/dbrules)
-        versus (d/q versus-q db initiator partner gossip/dbrules)
+                   (feels-for ?e ?pov ?mind ?x ?mind _)]
+        stance (d/q stance-q db pov initiator partner gossip/dbrules)
+        versus (d/q versus-q db pov initiator partner gossip/dbrules)
         no-stance {:belief/subject initiator, :belief/object partner :belief/feeling :none}
         no-versus {:belief/subject partner, :belief/object initiator :belief/feeling :none}
         vs (case [(:belief/feeling stance :none)
@@ -246,9 +247,11 @@
       )]))
 
 (defn emotional-setting
-  [db initiator partner]
-  (let [[ini-feel ini-vs ini-str] (my-emotional-setting db initiator partner)
-        [par-feel par-vs par-str] (my-emotional-setting db partner initiator)
+  [db initiator partner pov]
+  (let [[ini-feel ini-vs ini-str] (my-emotional-setting db initiator partner
+                                                        (or pov initiator))
+        [par-feel par-vs par-str] (my-emotional-setting db partner initiator
+                                                        (or pov partner))
         ini-corr? (= ini-vs par-feel)
         par-corr? (= par-vs ini-feel)
         ini (name initiator)
