@@ -517,7 +517,7 @@
   :minor-news?
   "
   [db speaker listener belief]
-  (let [source (:belief/source belief)
+  (let [source (or (:belief/source belief) speaker)
         belief (assoc belief :belief/source speaker)
         subj (:belief/subject belief)
         lis-fact (assoc belief
@@ -674,7 +674,7 @@
                          (let [cause (d/pull db '[*] (:db/id cause-ref))]
                            (println "fwd cause " cause)
                            (turn-part db initiator partner
-                                      [(dissoc cause :belief/source :belief/cause)])))
+                                      [(dissoc cause #_:belief/source :belief/cause)])))
         db (if fwd-cause-part (:db fwd-cause-part) db)
         ;; partner speaks (think first)
         [db partner-thoughts1] (think db partner)
@@ -684,8 +684,6 @@
         ;; listener learns cause too (another belief)
         back-cause-part (when-let [cause-ref (:belief/cause (:gossip back-part))]
                           (let [cause (d/pull db '[*] (:db/id cause-ref))]
-                            (println "gossip" (:gossip back-part))
-                            (println "back cause " cause)
                             (turn-part db partner initiator
                                        [(dissoc cause #_:belief/source :belief/cause)])))
         db (if back-cause-part (:db back-cause-part) db)

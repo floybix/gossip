@@ -195,8 +195,8 @@
                                  (:missing? belief)
                                  "text-muted"
                                  (and (:belief/lie? belief)
-                                      (or (not playing?)
-                                        (= pov (:belief/fabricator pov))))
+                                      (or (not pov)
+                                          (= pov (:belief/fabricator belief))))
                                  "belief-lie"
                                  :else
                                  (case (:belief/feeling belief)
@@ -222,7 +222,7 @@
             "Click a name to show what they know:"]))]]
      (into [:div.row]
            (for [mind people
-                 :let [avatar (get-in @ui-state [:avatars mind])]]
+                 :let [avatar (get-in @ui-state [:avatars mind] "@")]]
              [:div.col-xs-6.col-sm-4.col-md-3.col-lg-2
               [:div.panel
                {:class (if (= mind pov) "panel-primary" "panel-default")}
@@ -408,16 +408,6 @@
              (rand-nth narr/embarrassed-phrases)
              (rand-nth narr/minor-news-response-phrases)))]
         ])
-     #_[:div.bg-success
-      [:h5 "DATA"]
-      [:ul
-       [:li (str "gossip " (:gossip part))]
-       [:li (str "existing " (:existing part))]
-       [:li (str "exposed-lie? " (:exposed-lie? part))]
-       [:li (str "reaction " (:reaction part))]
-       [:li (str "back-gossip " (:back-gossip part))]
-       [:li (str "minor-news " (:minor-news part))]
-       ]]
      ]))
 
 (defn avatar-float
@@ -447,7 +437,8 @@
                  :belief/object object
                  :belief/feeling feeling}
         existing (gossip/existing-belief db belief*)
-        belief (if existing
+        belief (if (and existing
+                        (= feeling (:belief/feeling existing :none)))
                  existing
                  (assoc belief*
                         :belief/lie? true
@@ -511,7 +502,8 @@
                       :belief/feeling feeling}
              existing (when (and subject object)
                         (gossip/existing-belief db belief*))
-             legit? (or (not object)
+             checking? (= subject partner)
+             legit? (or (not object) ;; so default display is green
                         (= feeling (:belief/feeling existing :none)))]
          [:div
           [:p
@@ -530,10 +522,16 @@
              :disabled (when (or (not (:subject belief))
                                  (not (:object belief))
                                  (= (:subject belief) (:object belief))
+                                 ;; no direct feelings
                                  (and (= (:subject belief) player)
-                                      (= (:object belief) partner)))
+                                      (= (:object belief) partner))
+                                 ;; can not lie about listener directly!
+                                 (and (= (:subject belief) partner)
+                                      (not legit?)))
                          "disabled")}
-            (if legit? "Try gossip" "Lie!")]]
+            (if legit?
+              (if checking? "Check gossip" "Try gossip")
+              "Lie!")]]
           ;; check whether in debt to listener
           (if owing
             [:p
@@ -628,7 +626,7 @@
         ]]
       [:p.lead
        (:meet-phrase enc)]
-      (avatar-float db ini "left")
+      (avatar-float ui-state ini "left")
       (turn-part-pane (:fwd-part enc)
                       (:fwd-reply enc)
                       (gossip/indebted db ini par)

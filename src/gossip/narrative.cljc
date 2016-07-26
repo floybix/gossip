@@ -12,7 +12,7 @@
   [db initiator partner]
   (-> ["At a party that night, SPE walks up to LIS and talks to HIM/HER."
        "The next day, SPE sees LIS at the park."
-       "In maths class, SPE passes a note to LIS."]
+       "In english class, SPE passes a note to LIS."]
       (rand-nth)
       (replacem {"SPE" (name initiator)
                  "LIS" (name partner)
@@ -42,7 +42,11 @@
   [[:span [:i "Gulp."] " Er, gotta go now, bye!"]])
 
 (def minor-news-response-phrases
-  ["Oh yeah. I was going to tell you..."])
+  ["Oh yeah. I was going to tell you..."
+   "I heard that too."])
+
+(def already-knew-response-phrases
+  ["Yeah yeah, I know."])
 
 (def positive-response-phrases
   ["Ha ha."
@@ -204,9 +208,9 @@
     (rand-nth positive-response-phrases)
     ;; listener didn't know that speaker knew that
     minor-news?
-    "Oh, you heard that too, huh?"
+    (rand-nth minor-news-response-phrases)
     :else
-    "Yeah yeah, I know."
+    (rand-nth already-knew-response-phrases)
     ))
 
 (defn my-emotional-setting
