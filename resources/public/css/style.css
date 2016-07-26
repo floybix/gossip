@@ -12,3 +12,7 @@
     color: #ffffff;
     background-color: #34495e;
 }
+
+.form-inline > * {
+    margin-left: 3px;
+}

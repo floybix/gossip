@@ -19,6 +19,7 @@
 (defonce ui-state
   (atom {:current-pov nil
          :playing-as nil
+         :avatars {}
          :choosing-avatar nil
          :adding-person {:name ""
                          :male? false}
@@ -101,8 +102,8 @@
                avatar (rand-nth avatars)]
            (swap-advance! app-state update :db
                           d/db-with [{:person/id id
-                                      :person/gender gender
-                                      :person/avatar avatar}])
+                                      :person/gender gender}])
+           (swap! ui-state assoc-in [:avatars id] avatar)
            (swap! ui-state assoc-in [:adding-person :name] "")))
        :disabled (when (str/blank? (:name person))
                    "disabled")}
@@ -221,8 +222,7 @@
             "Click a name to show what they know:"]))]]
      (into [:div.row]
            (for [mind people
-                 :let [avatar (:person/avatar
-                               (d/pull db '[*] [:person/id mind]))]]
+                 :let [avatar (get-in @ui-state [:avatars mind])]]
              [:div.col-xs-6.col-sm-4.col-md-3.col-lg-2
               [:div.panel
                {:class (if (= mind pov) "panel-primary" "panel-default")}
@@ -248,19 +248,18 @@
                 ]
                [:div.panel-body
                 (if (= mind (:choosing-avatar @ui-state))
-                  (into
-                   [:div
-                    [:p.small "Pick an avatar:"]]
-                   (for [a avatars]
-                     [:a
-                      {:on-click
-                       (fn [_]
-                         (swap! app-state update :db
-                                d/db-with [{:person/id mind
-                                            :person/avatar a}])
-                         (swap! ui-state
-                                assoc :choosing-avatar nil))}
-                      a]))
+                  [:div
+                   [:p.small "Pick an avatar:"]
+                   (into
+                    [:div
+                     {:style {:font-size "18px"}}]
+                    (for [a avatars]
+                      [:a
+                       {:on-click
+                        (fn [_]
+                          (swap! ui-state assoc-in [:avatars mind] a)
+                          (swap! ui-state assoc :choosing-avatar nil))}
+                       a]))]
                   (let [knowl (d/q gossip/my-knowledge-of-their-beliefs-q
                                    db (or pov mind) mind)
                         ;; also look up this mind's actual beliefs
@@ -422,9 +421,8 @@
      ]))
 
 (defn avatar-float
-  [db person float]
-  (let [ava (:person/avatar
-             (d/pull db '[*] [:person/id person]))]
+  [ui-state person float]
+  (let [ava (get-in @ui-state [:avatars person])]
     [:div
      {:style {:float float
               :padding "1em"
@@ -489,7 +487,7 @@
            emo-str]]))
      [:p.lead
       meet-str]
-     (avatar-float db player "left")
+     (avatar-float ui-state player "left")
      (into [:div]
            (for [[belief result] attempts]
              [:div
@@ -562,7 +560,7 @@
                 "How about you?"
                 "I got nothing, sorry")]
              ])
-          (avatar-float db partner "right")
+          (avatar-float ui-state partner "right")
           ])
        ;; continued turn
        (let [enc (:continued ienc)
@@ -577,7 +575,7 @@
               "Wait, what?"]
              (turn-part-pane (:fwd-cause-part enc)
                              "" false true)])
-          (avatar-float db partner "right")
+          (avatar-float ui-state partner "right")
           (turn-part-pane (:back-part enc)
                           (:back-reply enc)
                           (gossip/indebted db par ini)
@@ -593,14 +591,10 @@
        )]))
 
 (defn other-turn-playing-pane
-  [enc db-before playing-as]
+  [ui-state enc db-before playing-as]
   (let [db (:db enc)
         ini (:initiator enc)
-        par (:partner enc)
-        ini-ava (:person/avatar
-                 (d/pull db '[*] [:person/id ini]))
-        par-ava (:person/avatar
-                 (d/pull db '[*] [:person/id par]))]
+        par (:partner enc)]
     [:div
      [:div ;.col-md-4
       (let [emo-str (narr/emotional-setting db-before ini par playing-as)]
@@ -611,25 +605,21 @@
             emo-str]]))
       [:p.lead
        (:meet-phrase enc)]
-      (avatar-float db ini "left")
+      (avatar-float ui-state ini "left")
       [:p.text-muted
        (apply str "Rhubarb"
               (repeat 50 " rhubarb"))]
-      (avatar-float db par "right")
+      (avatar-float ui-state par "right")
       [:p.text-muted
        (apply str "Rhubarb"
               (repeat 50 " rhubarb"))]
       ]]))
 
 (defn other-turn-not-playing-pane
-  [enc db-before]
+  [ui-state enc db-before]
   (let [db (:db enc)
         ini (:initiator enc)
-        par (:partner enc)
-        ini-ava (:person/avatar
-                 (d/pull db '[*] [:person/id ini]))
-        par-ava (:person/avatar
-                 (d/pull db '[*] [:person/id par]))]
+        par (:partner enc)]
     [:div
      [:div ;.col-md-4
       [:p
@@ -658,7 +648,7 @@
           (->> thoughts
                (map :belief/phrase)
                (str/join \newline))]])
-      (avatar-float db par "right")
+      (avatar-float ui-state par "right")
       (turn-part-pane (:back-part enc)
                       (:back-reply enc)
                       (gossip/indebted db par ini)
@@ -702,63 +692,61 @@
   (let [db (:db @app-state)
         people (gossip/all-people db)]
     [:div
-     (when (and (>= (count people) 3)
-                (not (:encounter @app-state))
+     (when (and (not (:encounter @app-state))
                 (not (:interactive @app-state)))
-       [:div.row
-        [:div.col-lg-12
-         [:button.btn.btn-primary.btn-block
-          {:on-click (fn [_]
-                       (if-let [player (:playing-as @ui-state)]
-                         (let [one (rand-nth people)
-                               other (gossip/random-partner db one)
-                               [ini par] (cond
-                                           (= one player) [one other]
-                                           (= other player) [other one]
-                                           :else [one other])]
-                           (if (= ini player)
-                             ;; interactive turn
-                             (swap-advance! app-state assoc
-                                            :interactive (init-interactive
-                                                          db ini par)
-                                            :day (inc (:day @app-state 0)))
-                             ;; not our turn
-                             (let [turn (gossip/turn db ini par)]
-                               (swap-advance! app-state assoc
-                                             :encounter (narr/narrate-turn turn)
-                                             :day (inc (:day @app-state 0)))))
-                           )
-                         ;; not playing
-                         (let [turn (gossip/random-turn db)]
-                           (swap-advance! app-state assoc
-                                          :encounter (narr/narrate-turn turn)
-                                          :day (inc (:day @app-state 0))))))
-           }
-          "Next encounter"
-          ]
-         [:p.lead
-          "You can add feelings or people now."]]])
+       [:div
+        [:p.lead
+         "You can add feelings or people now."]
+        (when (>= (count people) 3)
+          [:button.btn.btn-primary.btn-block
+           {:on-click (fn [_]
+                        (if-let [player (:playing-as @ui-state)]
+                          (let [one (rand-nth people)
+                                other (gossip/random-partner db one)
+                                [ini par] (cond
+                                            (= one player) [one other]
+                                            (= other player) [other one]
+                                            :else [one other])]
+                            (if (= ini player)
+                              ;; interactive turn
+                              (swap-advance! app-state assoc
+                                             :interactive (init-interactive
+                                                           db ini par)
+                                             :day (inc (:day @app-state 0)))
+                              ;; not our turn
+                              (let [turn (gossip/turn db ini par)]
+                                (swap-advance! app-state assoc
+                                               :encounter (narr/narrate-turn turn)
+                                               :day (inc (:day @app-state 0)))))
+                            )
+                          ;; not playing
+                          (let [turn (gossip/random-turn db)]
+                            (swap-advance! app-state assoc
+                                           :encounter (narr/narrate-turn turn)
+                                           :day (inc (:day @app-state 0))))))
+            }
+           "Next encounter"
+           ])])
      (when (or (:encounter @app-state)
                (:continued (:interactive @app-state)))
-       [:div.row
-        [:div.col-lg-12
-         [:button.btn.btn-success.btn-block
-          {:on-click (fn [_]
-                       (if-let [enc (or (:encounter @app-state)
-                                        (:continued (:interactive @app-state)))]
-                         (swap-advance! app-state assoc
-                                        :db (:db enc)
-                                        :encounter nil
-                                        :interactive nil)))
-           }
-          "Continue"
-          ]]])
+       [:div
+        [:button.btn.btn-success.btn-block
+         {:on-click (fn [_]
+                      (if-let [enc (or (:encounter @app-state)
+                                       (:continued (:interactive @app-state)))]
+                        (swap-advance! app-state assoc
+                                       :db (:db enc)
+                                       :encounter nil
+                                       :interactive nil)))
+          }
+         "Continue"
+         ]])
      (when (:interactive @app-state)
        (interactive-turn-pane app-state ui-state))
      (when-let [enc (:encounter @app-state)]
        (if-let [playing-as (:playing-as @ui-state)]
-         (other-turn-playing-pane enc db playing-as)
-         (other-turn-not-playing-pane enc db)))
+         (other-turn-playing-pane ui-state enc db playing-as)
+         (other-turn-not-playing-pane ui-state enc db)))
      ]))
 
 (defn navbar
