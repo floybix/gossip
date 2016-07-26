@@ -1,12 +1,61 @@
 # gossip
 
-Gossip simulator.
+A gossip game.
 
 ## Overview
 
-FIXME: Write a paragraph about the library/project and highlight its goals.
+There are at least 3 people simulated in the game. It works better
+with 4 or 5.
 
-## Setup
+People have feelings: they may **like**, **fear** or be **angry** with
+others.
+
+People hold beliefs about what other people feel.
+
+The aim of the game is to become the most popular, i.e. to have the
+most people like you.
+
+Random pairs of people meet and tell each other gossip: feelings or
+beliefs. _The listener also learns about the source of a belief (who
+told it to the speaker) or of any other belief that led to this one
+(see rules below)._
+
+You can not tell someone your feelings for them directly. (Too
+embarrassing!)
+
+You can lie. But if the person you lied about hears it, they will be
+angry with you. _(Actually, they will be angry with whoever told it to
+the person that told them. But that will often be the original liar.)_
+
+If you don't have anything new to say, you owe gossip for next
+time. When you meet the same partner again you must come up with
+something new. You may have to lie.
+
+Simulated players react to social situations _(actually, their beliefs
+about social situations, which may or may not be correct)_ according
+to rules:
+
+#### Rules
+
+* if _x_ likes me then I will like _x_.
+* if _x_ is angry with me then I will either be afraid of them or be angry back.
+* if I like _x_ and _x_ likes _y_ then I will either like _y_ or be angry with _y_.
+* if I am angry with _x_ and _y_ is also angry with _x_ then I will like _y_.
+* if _x_ fears me and I fear _x_, I will not fear _x_.
+* if _x_ is more popular than I am, by 2 or more likes, AND nobody I like
+  is angry with _x_, I will like _x_.
+* if _x_ spread a lie about me, I will be angry with _x_, and assume that _x_
+  does not like me.
+
+
+## Just play
+
+[Play it here.](http://floybix.github.io/gossip/)
+
+
+## Code
+
+First, install [Leiningen](http://leiningen.org/).
 
 To get an interactive development environment run:
 
