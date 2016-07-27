@@ -16,3 +16,7 @@
 .form-inline > * {
     margin-left: 3px;
 }
+
+.draggable {
+    cursor: move;
+}

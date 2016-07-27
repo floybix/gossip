@@ -4,6 +4,7 @@
             [datascript.core :as d]
             [gossip.core :as gossip :refer [he-she him-her replacem]]
             [gossip.narrative :as narr]
+            [gossip.viz :as viz]
             [clojure.set :as set]
             [clojure.string :as str]))
 
@@ -21,6 +22,7 @@
          :playing-as nil
          :avatars {}
          :choosing-avatar nil
+         :graph-coords {}
          :adding-person {:name ""
                          :male? false}
          :adding-belief {:belief/subject nil
@@ -103,8 +105,13 @@
            (swap-advance! app-state update :db
                           d/db-with [{:person/id id
                                       :person/gender gender}])
-           (swap! ui-state assoc-in [:avatars id] avatar)
-           (swap! ui-state assoc-in [:adding-person :name] "")))
+           (swap! ui-state
+                  (fn [m]
+                    (-> m
+                        (assoc-in [:avatars id] avatar)
+                        (assoc-in [:graph-coords id] [(+ 100 (rand-int 300))
+                                                      (+ 100 (rand-int 200))])
+                        (assoc-in [:adding-person :name] ""))))))
        :disabled (when (str/blank? (:name person))
                    "disabled")}
       "Add person"]]))
@@ -236,6 +243,10 @@
          (when-not playing?
            [:p.text-muted
             "Click a name to show what they know:"]))]]
+     [:div.row
+      [:div.col-lg-12
+       (viz/social-graph-svg ui-state db pov)]
+      ]
      (into [:div.row]
            (for [mind people
                  :let [avatar (get-in @ui-state [:avatars mind] "@")]]
@@ -338,7 +349,8 @@
                    "I owe gossip to "
                    (str/join ", " (map name dto))]
                   )]]
-              ]))]))
+              ]))
+     ]))
 
 (defn turn-part-pane
   [part reply owing-after? playing?]
