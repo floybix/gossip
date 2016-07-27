@@ -23,12 +23,12 @@
          :choosing-avatar nil
          :adding-person {:name ""
                          :male? false}
-         :adding-belief {:subject nil
-                         :object nil
-                         :feeling :like}
-         :play-belief {:subject nil
-                       :object nil
-                       :feeling :like}}))
+         :adding-belief {:belief/subject nil
+                         :belief/object nil
+                         :belief/feeling :like}
+         :play-belief {:belief/subject nil
+                       :belief/object nil
+                       :belief/feeling :like}}))
 
 (defn init-interactive
   [db player partner]
@@ -116,11 +116,11 @@
     [:div.form-group
       ;; subject
       [:select.form-control
-       {:value (or (:subject belief) " ")
+       {:value (or (:belief/subject belief) " ")
         :on-change (fn [e]
                      (let [s (-> e .-target forms/getValue)]
                        (swap! ui-state assoc-in
-                              [ui-state-key :subject]
+                              [ui-state-key :belief/subject]
                               (when-not (str/blank? s) (keyword s)))))
         :disabled (when subj-disabled "disabled")}
        (for [person (cons " " people)]
@@ -130,11 +130,11 @@
        ]
       ;; feeling
       [:select.form-control
-       {:value (:feeling belief)
+       {:value (:belief/feeling belief)
         :on-change (fn [e]
                      (let [s (-> e .-target forms/getValue)]
                        (swap! ui-state assoc-in
-                              [ui-state-key :feeling]
+                              [ui-state-key :belief/feeling]
                               (keyword s))))}
        (for [feeling [:like :anger :fear :none]]
          [:option {:key feeling
@@ -147,11 +147,11 @@
        ]
       ;; object
       [:select.form-control
-       {:value (or (:object belief) " ")
+       {:value (or (:belief/object belief) " ")
         :on-change (fn [e]
                      (let [s (-> e .-target forms/getValue)]
                        (swap! ui-state assoc-in
-                              [ui-state-key :object]
+                              [ui-state-key :belief/object]
                               (when-not (str/blank? s) (keyword s)))))}
        (for [person (cons " " people)]
          [:option {:key person
@@ -162,6 +162,8 @@
 (defn add-belief-pane
   [app-state ui-state]
   (let [belief (:adding-belief @ui-state)
+        subject (:belief/subject belief)
+        object (:belief/object belief)
         db (:db @app-state)]
     [:div.form-inline.well
      (belief-input ui-state :adding-belief db (:playing-as @ui-state))
@@ -169,43 +171,57 @@
      [:button.btn.btn-default
       {:on-click
        (fn [_]
-         (let [{:keys [subject object feeling]} belief]
-           (swap-advance! app-state update :db
-                          gossip/believe subject subject subject object feeling)
-           (swap! ui-state assoc-in [:adding-belief :object] nil)))
-       :disabled (when (or (not (:subject belief))
-                           (not (:object belief))
-                           (= (:subject belief) (:object belief)))
+         (let [belief (assoc belief
+                             :belief/person subject
+                             :belief/mind subject)]
+           (swap-advance! app-state update :db gossip/believe belief)
+           (swap! ui-state assoc-in [:adding-belief :belief/object] nil)))
+       :disabled (when (or (not subject)
+                           (not object)
+                           (= subject object))
                    "disabled")}
       "Add/replace feeling"]]))
+
+(defn belief-li
+  [db pov mind belief on-click]
+  (let [mind (or mind (:belief/mind belief))]
+    [:li.belief
+     {:class (cond
+               (:missing? belief)
+               "text-muted"
+               (and (:belief/lie? belief)
+                    (or (not pov) ;playing?
+                        (= pov (:belief/fabricator belief))))
+               "belief-lie"
+               :else
+               (case (:belief/feeling belief)
+                 :like "bg-warning" ;; yellow
+                 :anger "bg-danger" ;; red
+                 :fear "bg-info" ;; blue
+                 ""))
+      :title (str
+              (when-let [cause-ref (:belief/cause belief)]
+                (let [cause (d/pull db '[*] (:db/id cause-ref))]
+                  (str "Because "
+                       (narr/phrase-belief db cause nil nil)
+                       " ")))
+              (when-let [source (:belief/source belief)]
+                (str "Heard it from " (name source) ".")))}
+     [(cond
+        (:missing? belief) :del
+        on-click :u
+        :else :span)
+      (when on-click
+        {:on-click on-click
+         :style {:cursor "pointer"}})
+      (narr/phrase-belief db belief mind nil)]]))
 
 (defn status-pane
   [app-state ui-state]
   (let [db (:db @app-state)
         playing? (:playing-as @ui-state)
         pov (or playing? (:current-pov @ui-state))
-        people (gossip/all-people db)
-        belief-li (fn [mind belief]
-                    (let [b-mind (:belief/mind belief)
-                          b-person (:belief/person belief) ; either pov or mind
-                          subj (:belief/subject belief)
-                          ]
-                      [:li.belief
-                       {:class (cond
-                                 (:missing? belief)
-                                 "text-muted"
-                                 (and (:belief/lie? belief)
-                                      (or (not pov)
-                                          (= pov (:belief/fabricator belief))))
-                                 "belief-lie"
-                                 :else
-                                 (case (:belief/feeling belief)
-                                   :like "bg-warning" ;; yellow
-                                   :anger "bg-danger" ;; red
-                                   :fear "bg-info" ;; blue
-                                   ""))}
-                       [(if (:missing? belief) :del :span)
-                        (narr/phrase-belief db belief (:belief/mind belief) nil)]]))]
+        people (gossip/all-people db)]
     [:div
      [:div.row
       [:div.col-lg-12
@@ -265,14 +281,8 @@
                         ;; also look up this mind's actual beliefs
                         ;; - see what knowledge is missing and tag it
                         missing (when (and pov (not= pov mind) (not playing?))
-                                  (let [substance
-                                        (fn [b]
-                                          (select-keys b [:belief/mind
-                                                          :belief/subject
-                                                          :belief/object
-                                                          :belief/feeling]))
-                                        knowl* (set (map substance knowl))]
-                                    (remove #(contains? knowl* (substance %))
+                                  (let [knowl* (set (map gossip/substance knowl))]
+                                    (remove #(contains? knowl* (gossip/substance %))
                                             (d/q gossip/my-beliefs-q db mind))))
                         by-subj (->> knowl
                                      (concat (map #(assoc % :missing? true)
@@ -284,7 +294,7 @@
                      (if-let [bs (get by-subj mind)]
                        (into [:ul.list-unstyled]
                              (for [belief bs]
-                               (belief-li mind belief)))
+                               (belief-li db pov mind belief nil)))
                        [:p.small
                         "I don't have any feelings."])
                      (if (seq (dissoc by-subj mind))
@@ -293,7 +303,7 @@
                         (into [:ul.list-unstyled]
                               (for [[subj bs] (dissoc by-subj mind)
                                     belief bs]
-                                (belief-li mind belief)))]
+                                (belief-li db pov mind belief nil)))]
                        [:p.small
                         "I don't know others' feelings."])
                      (let [likes (->> (d/q gossip/perceived-popularity-q
@@ -428,31 +438,30 @@
      ]))
 
 (defn interactive-attempt
-  [state subject object feeling]
+  [state belief*]
   (let [ienc (:interactive state)
         {:keys [db player partner meet-str attempts]} ienc
-        belief* {:belief/person player
-                 :belief/mind player
-                 :belief/subject subject
-                 :belief/object object
-                 :belief/feeling feeling}
         existing (gossip/existing-belief db belief*)
         belief (if (and existing
-                        (= feeling (:belief/feeling existing :none)))
+                        (= (:belief/feeling belief* :none)
+                           (:belief/feeling existing :none)))
                  existing
                  (assoc belief*
                         :belief/lie? true
                         :belief/fabricator player))
         result (gossip/goss-result db player partner belief)
-        attempt [(assoc belief :phrased
-                        (narr/phrase-gossip db player partner belief))
-                 (assoc result :phrased
-                        (narr/phrase-response db player partner belief result))]
         ;; if gossip was successful, clear player debt
         ;; if had back-gossip (because outdated/lie), clear partner debt
         db (cond-> (:db result)
              (:news? result) (gossip/update-debt player partner true)
-             (:wrong? result) (gossip/update-debt partner player true))]
+             (:wrong? result) (gossip/update-debt partner player true))
+        [db thoughts] (gossip/think db player)
+        [db thoughts2] (gossip/think db player)
+        attempt [(assoc belief :phrased
+                        (narr/phrase-gossip db player partner belief))
+                 (assoc result :phrased
+                        (narr/phrase-response db player partner belief result))
+                 (concat thoughts thoughts2)]]
     (update state :interactive
             (fn [ienc]
               (-> ienc
@@ -480,7 +489,7 @@
       meet-str]
      (avatar-float ui-state player "left")
      (into [:div]
-           (for [[belief result] attempts]
+           (for [[belief result thoughts] attempts]
              [:div
               [:p
                [:b (str (name player) ": ")]
@@ -490,21 +499,27 @@
                [:b (str (name partner) ": ")]
                (:phrased result)
                ]
+              (when (seq thoughts)
+                [:p
+                 [:i
+                  [:b (str (name player) " thinks: ")]
+                  (->> thoughts
+                       (map :belief/phrase)
+                       (str/join \newline))]])
               ]))
      (if-not (:continued ienc)
        ;; this turn is still in play, interactive
-       (let [belief (:play-belief @ui-state)
-             {:keys [subject object feeling]} belief
-             belief* {:belief/person player
-                      :belief/mind player
-                      :belief/subject subject
-                      :belief/object object
-                      :belief/feeling feeling}
+       (let [belief (assoc (:play-belief @ui-state)
+                           :belief/person player
+                           :belief/mind player)
+             subject (:belief/subject belief)
+             object (:belief/object belief)
              existing (when (and subject object)
-                        (gossip/existing-belief db belief*))
+                        (gossip/existing-belief db belief))
              checking? (= subject partner)
              legit? (or (not object) ;; so default display is green
-                        (= feeling (:belief/feeling existing :none)))]
+                        (= (:belief/feeling belief :none)
+                           (:belief/feeling existing :none)))]
          [:div
           [:p
            [:b (str (name player) ": ")]
@@ -516,22 +531,34 @@
             {:class (if legit? "btn-success" "btn-warning")
              :on-click
              (fn [_]
-               (swap-advance! app-state interactive-attempt
-                              subject object feeling)
-               (swap! ui-state assoc-in [:play-belief :object] nil))
-             :disabled (when (or (not (:subject belief))
-                                 (not (:object belief))
-                                 (= (:subject belief) (:object belief))
+               (swap-advance! app-state interactive-attempt belief)
+               (swap! ui-state assoc-in [:play-belief :belief/object] nil))
+             :disabled (when (or (not subject)
+                                 (not object)
+                                 (= subject object)
                                  ;; no direct feelings
-                                 (and (= (:subject belief) player)
-                                      (= (:object belief) partner))
+                                 (and (= subject player)
+                                      (= object partner))
                                  ;; can not lie about listener directly!
-                                 (and (= (:subject belief) partner)
+                                 (and (= subject partner)
+                                      (not legit?))
+                                 ;; can not lie about own feelings
+                                 (and (= subject player)
                                       (not legit?)))
                          "disabled")}
             (if legit?
               (if checking? "Check gossip" "Try gossip")
-              "Lie!")]]
+              "Lie!")]
+           (when (and (= subject player)
+                      (= object partner))
+             [:p.text-danger "No direct feelings!"])
+           (when (and (= subject partner)
+                      (not legit?))
+             [:p.text-danger "Can not lie about the listener!"])
+           (when (and (= subject player)
+                      (not legit?))
+             [:p.text-danger "Can not lie about your own feelings!"])
+           ]
           ;; check whether in debt to listener
           (if owing
             [:p
@@ -539,8 +566,9 @@
               (str "You owe " (name partner) " some goss. You can't skip!")]]
             [:div.form-inline
              ;; continue with rest of turn button
-             [:button.btn.btn-default
-              {:on-click
+             [:button.btn
+              {:class (if gossip "btn-primary" "btn-default")
+               :on-click
                (fn [_]
                  ;; fall into debt if didn't gossip
                  (let [db (gossip/update-debt db player partner gossip)
@@ -559,6 +587,49 @@
                 "I got nothing, sorry")]
              ])
           (avatar-float ui-state partner "right")
+          ;; shortcuts, listing known beliefs
+          (let [their-knowl (d/q gossip/my-knowledge-of-their-beliefs-q
+                                 db player partner)
+                my-knowl (d/q gossip/my-beliefs-q
+                              db player)
+                ;; find any of my beliefs they don't already know
+                new-knowl (let [their* (set (map gossip/substance their-knowl))]
+                            (remove #(contains? their* (gossip/substance %))
+                                    my-knowl))]
+            [:div
+             {:style {:clear "left"}}
+             [:h5 "Shortcuts"]
+             (if-let [bs (seq new-knowl)]
+               [:div
+                {:style {:clear "left"}}
+                [:p
+                 "I think " (name partner) " does not know these:"]
+                (into [:ul.list-unstyled
+                       {:style {:width "24ex"
+                                :float "left"}}]
+                      (for [belief bs]
+                        (belief-li db player player belief
+                                   (fn []
+                                     (swap! ui-state assoc :play-belief
+                                            (gossip/substance belief))))))
+                ]
+               )
+             (if-let [bs (seq their-knowl)]
+               [:div
+                {:style {:clear "left"}}
+                [:p
+                 "As far as I know, " (name partner) " already thinks these, but can check:"]
+                (into [:ul.list-unstyled
+                       {:style {:width "24ex"
+                                :float "left"}}]
+                      (for [belief bs]
+                        (belief-li db player player belief
+                                   (fn []
+                                     (swap! ui-state assoc :play-belief
+                                            (gossip/substance belief))))))])
+             [:p
+              {:style {:clear "left"}}
+              "Or, of course, I could try something else."]])
           ])
        ;; continued turn
        (let [enc (:continued ienc)
@@ -693,8 +764,6 @@
      (when (and (not (:encounter @app-state))
                 (not (:interactive @app-state)))
        [:div
-        [:p.lead
-         "You can add feelings or people now."]
         (when (>= (count people) 3)
           [:button.btn.btn-primary.btn-block
            {:on-click (fn [_]
@@ -724,7 +793,10 @@
                                            :day (inc (:day @app-state 0))))))
             }
            "Next encounter"
-           ])])
+           ])
+        (when-not (:playing-as @ui-state)
+          [:p.lead
+           "You can add feelings or people now."])])
      (when (or (:encounter @app-state)
                (:continued (:interactive @app-state)))
        [:div
@@ -805,7 +877,7 @@
                                   :playing-as new-as)
                            (when new-as
                              (swap! ui-state assoc-in
-                                    [:adding-belief :subject] new-as))))}
+                                    [:adding-belief :belief/subject] new-as))))}
            (for [person (cons "not playing" people)]
              [:option {:key (name person)
                        :value (name person)}
@@ -839,12 +911,14 @@
    [:div.container-fluid
     ;; can not alter db when it will be replaced:
     (when-not (or (:encounter @app-state)
-                  (:interactive @app-state))
+                  (:interactive @app-state)
+                  (:playing-as @ui-state))
       [:div.row
        [:div.col-lg-6
         [add-person-pane app-state ui-state]]
        [:div.col-lg-6
-        [add-belief-pane app-state ui-state]]])
+        [add-belief-pane app-state ui-state]]]
+      )
     [:div.row
      [:div.col-lg-8.col-md-6
       [status-pane app-state ui-state]]

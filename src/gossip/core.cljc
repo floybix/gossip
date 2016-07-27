@@ -111,6 +111,13 @@
     [?e :belief/feeling :like]]
   )
 
+(defn substance
+  [belief]
+  (select-keys belief
+               [:belief/subject
+                :belief/object
+                :belief/feeling]))
+
 (defn existing-belief
   [db belief]
   (d/q '[:find (pull ?e [*]) .
@@ -228,20 +235,14 @@
                         :belief/subject mind
                         :belief/object x}
                 existing (existing-belief db belief)]
-          :when (not (contains? #{:anger :fear} (:belief/feeling existing)))
-          :let [new-feeling (rand-nth [:anger :fear])]]
+          :when (not (contains? #{:fear} (:belief/feeling existing)))
+          :let [new-feeling :fear]]
       (assoc belief
              :belief/feeling new-feeling
              :belief/cause e1
              :belief/phrase
-             (cond
-               (= :anger new-feeling)
-               (replacem "Well if FOO is angry with me then I'm angry with HIM/HER."
-                         {"FOO" (name x)
-                          "HIM/HER" (him-her db x)})
-               (= :fear new-feeling)
-               (replacem "Uh-oh, I'd better keep away from FOO."
-                         {"FOO" (name x)}))))))
+             (replacem "Uh-oh, I'd better keep away from FOO 😨"
+                       {"FOO" (name x)})))))
 
 (defn me-like-x-&-x-like-y-response
   [db person mind]

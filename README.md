@@ -1,6 +1,7 @@
 # gossip
 
-A gossip game.
+So gossip, much excite, wow.
+
 
 ## Overview
 
@@ -10,7 +11,7 @@ with 4 or 5.
 People have feelings: they may **like**, **fear** or be **angry** with
 others.
 
-People hold beliefs about what other people feel.
+People hold beliefs about what others feel and what others know.
 
 The aim of the game is to become the most popular, i.e. to have the
 most people like you.
@@ -27,18 +28,21 @@ You can lie. But if the person you lied about hears it, they will be
 angry with you. _(Actually, they will be angry with whoever told it to
 the person that told them. But that will often be the original liar.)_
 
+You can't lie about your own feelings (such a lie could never be
+exposed).
+
 If you don't have anything new to say, you owe gossip for next
 time. When you meet the same partner again you must come up with
 something new. You may have to lie.
 
-Simulated players react to social situations _(actually, their beliefs
-about social situations, which may or may not be correct)_ according
-to rules:
+All players react to social situations _(actually, their beliefs about
+social situations, which may or may not be correct)_ according to
+rules:
 
 #### Rules
 
 * if _x_ likes me then I will like _x_.
-* if _x_ is angry with me then I will either be afraid of them or be angry back.
+* if _x_ is angry with me then I will fear _x_.
 * if I like _x_ and _x_ likes _y_ then I will either like _y_ or be angry with _y_.
 * if I am angry with _x_ and _y_ is also angry with _x_ then I will like _y_.
 * if _x_ fears me and I fear _x_, I will not fear _x_.
@@ -48,7 +52,7 @@ to rules:
   does not like me.
 
 
-## Just play
+## Play
 
 [Play it here.](http://floybix.github.io/gossip/)
 
@@ -80,6 +84,12 @@ To create a production build run:
 
 And open your browser in `resources/public/index.html`. You will not
 get live reloading, nor a REPL.
+
+
+## Dedication
+
+For Zari Andrews.
+
 
 ## License
 
