@@ -197,7 +197,7 @@
                (:missing? belief)
                "text-muted"
                (and (:belief/lie? belief)
-                    (or (not pov) ;playing?
+                    (or (not pov)
                         (= pov (:belief/fabricator belief))))
                "belief-lie"
                :else
@@ -206,14 +206,7 @@
                  :anger "bg-danger" ;; red
                  :fear "bg-info" ;; blue
                  ""))
-      :title (str
-              (when-let [cause-ref (:belief/cause belief)]
-                (let [cause (d/pull db '[*] (:db/id cause-ref))]
-                  (str "Because "
-                       (narr/phrase-belief db cause nil nil)
-                       " ")))
-              (when-let [source (:belief/source belief)]
-                (str "Heard it from " (name source) ".")))}
+      :title (narr/belief-explanation db pov belief)}
      [(cond
         (:missing? belief) :del
         on-click :u
@@ -468,12 +461,11 @@
              (:news? result) (gossip/update-debt player partner true)
              (:wrong? result) (gossip/update-debt partner player true))
         [db thoughts] (gossip/think db player)
-        [db thoughts2] (gossip/think db player)
         attempt [(assoc belief :phrased
                         (narr/phrase-gossip db player partner belief))
                  (assoc result :phrased
                         (narr/phrase-response db player partner belief result))
-                 (concat thoughts thoughts2)]]
+                 thoughts]]
     (update state :interactive
             (fn [ienc]
               (-> ienc
@@ -590,7 +582,8 @@
                                        :speaker player
                                        :listener partner)
                        cont (-> (gossip/continue-turn db player partner fwd-part)
-                                (gossip/partner-think))]
+                                (gossip/partner-think)
+                                (gossip/initiator-think))]
                    (swap-advance! app-state assoc-in [:interactive :continued]
                                   cont)))
                }
@@ -668,6 +661,22 @@
               "Wait, what?"]
              (turn-part-pane (:back-cause-part enc)
                              "" false true)])
+          ;; listener's thoughts after the interaction
+          (when-let [thoughts (seq (:back-thoughts enc))]
+            [:p
+             [:i
+              [:b (str (name player) " thinks: ")]
+              (->> thoughts
+                   (map :belief/phrase)
+                   (str/join \newline))]])
+          ;; later thoughts
+          (when-let [thoughts (seq (:initiator-thoughts enc))]
+            [:p
+             [:i
+              [:b (str (name ini) " thinks: ")]
+              (->> thoughts
+                   (map :belief/phrase)
+                   (str/join \newline))]])
           ])
        )]))
 
@@ -745,7 +754,7 @@
       (when-let [thoughts (seq (:back-thoughts enc))]
         [:p
          [:i
-          [:b (str (name par) " thinks: ")]
+          [:b (str (name ini) " thinks: ")]
           (->> thoughts
                (map :belief/phrase)
                (str/join \newline))]])

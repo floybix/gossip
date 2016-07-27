@@ -127,7 +127,11 @@
                            :like "😍"
                            :fear "😨"
                            :anger "😡"
-                           :none "⚪")]]
+                           :none "⚪")
+                  modif (if (and (:belief/lie? belief)
+                                 (or (not pov)
+                                     (= pov (:belief/fabricator belief))))
+                          "❌" "")]]
         [:g
          [:polyline
           {:points (str/join " " (concat from-xy to-xy))
@@ -138,9 +142,10 @@
           {:text-anchor "middle"
            :x (first to-xy)
            :y (+ (second to-xy) 8)
-           :style {:font-size "16px"
-                   }}
-          symbol]]
+           :style {:font-size "16px"}
+           }
+          (str symbol modif)]
+         [:title (narr/belief-explanation db pov belief)]]
         ))
      ]
     ))
