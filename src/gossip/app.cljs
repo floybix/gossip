@@ -448,18 +448,24 @@
 (defn avatar-float
   [ui-state person float]
   (let [ava (get-in @ui-state [:avatars person])]
+    ;; need css transform/absolute hack to scale emoji on ios
     [:div
      {:style {:float float
+              :width "5em"
+              :height "5em"
               :padding "1em"
               :margin (case float
-                        "left" "0 1em 1em 0"
-                        "right" "0 0 1em 1em")
-              :background "#eee"
-              :border "1px solid #ddd"
-              :border-radius "33%"}}
-     [:div.text-center {:style {:font-size "5em"}}
+                        "left" "0 0 0 1em"
+                        "right" "1em 0 0 1em"
+                        )
+              }}
+     [:div
+      {:style {:-webkit-transform "scale(5)"
+               :-moz-transform "scale(5)"
+               :transform "scale(5)"
+               :position "absolute"}}
       ava]
-     [:h4.text-center (name person)]
+     " "
      ]))
 
 (defn interactive-attempt

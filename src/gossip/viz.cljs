@@ -36,7 +36,7 @@
   (let [people (gossip/all-people db)
         ppl-at (:graph-coords @ui-state)
         drag-move (fn [e]
-                    (.preventDefault e)
+                    ;(.preventDefault e)
                     (when @dragging
                       (let [x (or (.-clientX e)
                                   (-> e .-changedTouches (aget 0) .-clientX))
@@ -101,7 +101,7 @@
           {:text-anchor "middle"
            :x my-x
            :y (+ my-y (* PERSON_RADIUS 0.1))
-           :style {:font-size (int (* PERSON_RADIUS 0.5))}
+           :style {:font-size (str (int (* PERSON_RADIUS 0.5)) "px")}
            :onMouseDown drag-start
            :onTouchStart drag-start}
           avatar]]))

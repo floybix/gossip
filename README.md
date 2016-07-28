@@ -93,7 +93,8 @@ get live reloading, nor a REPL.
 
 ## Tech
 
-Clojure, Clojurescript, Datalog, Datascript, React, Reagent, SVG, Bootstrap.
+Clojure, Clojurescript, Datalog, Datascript, React, Reagent, SVG, Bootstrap,
+Unicode Emoji.
 
 
 ## Dedication
