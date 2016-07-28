@@ -1,6 +1,6 @@
-# gossip
+# gossip 🐽
 
-So gossip, much excite, wow.
+So gossip, very emotion, wow.
 
 
 ## Overview
@@ -54,12 +54,12 @@ rules:
 
 ## Play
 
-[Play it here.](http://floybix.github.io/gossip/)
+You can [play it here.](https://floybix.github.io/gossip/)
 
-Begin by making 4 characters.
-
-Then select **Playing as:** to be one of the characters. That will
-start the game. Each character starts with one random feeling.
+Begin by making up 4 characters. Then select **(Playing as:)** to be one
+of the characters. That will start the game. Each character starts
+with one random feeling. Keep doing **(Next encounter)** until you've
+had enough, then **(End game)** to see who ended up being most popular.
 
 
 ## Code
@@ -89,6 +89,11 @@ To create a production build run:
 
 And open your browser in `resources/public/index.html`. You will not
 get live reloading, nor a REPL.
+
+
+## Tech
+
+Clojure, Clojurescript, Datalog, Datascript, React, Reagent, SVG, Bootstrap.
 
 
 ## Dedication
