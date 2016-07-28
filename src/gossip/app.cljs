@@ -225,17 +225,19 @@
     [:div
      [:div.row
       [:div.col-lg-12
-       (if pov
-         [:p "Showing what " [:b (name pov)] " knows. "
+       [:p
+        "Hover on beliefs for info. "
+        (if pov
+          [:span
+           "Showing what " [:b (name pov)] " knows. "
+           (when-not playing?
+             [:button.btn-primary.btn-xs
+              {:on-click
+               (fn [_]
+                 (swap! ui-state assoc :current-pov nil))}
+              "Show true feelings"])]
           (when-not playing?
-            [:button.btn-primary.btn-xs
-             {:on-click
-              (fn [_]
-                (swap! ui-state assoc :current-pov nil))}
-             "Show true feelings"])]
-         (when-not playing?
-           [:p.text-muted
-            "Click a name to show what they know:"]))]]
+            "Click a name to show what they know:"))]]]
      [:div.row
       [:div.col-lg-12
        (viz/social-graph-svg ui-state db pov)]
@@ -252,7 +254,8 @@
                   {:on-click
                    (fn [_]
                      (swap! ui-state update :choosing-avatar
-                            #(if (= % mind) nil mind)))}
+                            #(if (= % mind) nil mind)))
+                   :href "#"}
                   avatar]]
                 [:h4.panel-title
                  (if (= mind pov)
@@ -941,10 +944,11 @@
         [add-belief-pane app-state ui-state]]]
       )
     [:div.row
+     [:div.col-lg-4.col-md-6
+      [encounter-pane app-state ui-state]]
      [:div.col-lg-8.col-md-6
       [status-pane app-state ui-state]]
-     [:div.col-lg-4.col-md-6
-      [encounter-pane app-state ui-state]]]
+     ]
     ]
    ])
 

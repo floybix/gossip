@@ -97,11 +97,13 @@
            (fn [_]
              (swap! ui-state assoc :current-pov mind))}
           (name mind)]
-         [:text.player-avatar
+         [:text.player-avatar.draggable
           {:text-anchor "middle"
            :x my-x
            :y (+ my-y (* PERSON_RADIUS 0.1))
-           :style {:font-size (int (* PERSON_RADIUS 0.5))}}
+           :style {:font-size (int (* PERSON_RADIUS 0.5))}
+           :onMouseDown drag-start
+           :onTouchStart drag-start}
           avatar]]))
      (into
       [:g]
@@ -138,14 +140,16 @@
            :stroke "#000"
            :stroke-opacity "0.2"
            :stroke-width "2"}]
-         [:text
-          {:text-anchor "middle"
-           :x (first to-xy)
-           :y (+ (second to-xy) 8)
-           :style {:font-size "16px"}
-           }
-          (str symbol modif)]
-         [:title (narr/belief-explanation db pov belief)]]
+         [:g
+          [:text
+           {:text-anchor "middle"
+            :x (first to-xy)
+            :y (+ (second to-xy) 8)
+            :style {:font-size "16px"
+                    :cursor "default"}
+            }
+           (str symbol modif)]
+          [:title (narr/belief-explanation db pov belief)]]]
         ))
      ]
     ))
