@@ -40,6 +40,23 @@
    :meet-str (narr/meeting-phrase db player partner)
    :attempts []})
 
+(defn init-beliefs
+  [db]
+  (let [people (gossip/all-people db)
+        news (mapcat (fn [person]
+                       (if (seq (d/q gossip/my-feelings-q db person))
+                         ;; has feelings already.
+                         []
+                         ;; no feelings. create one.
+                         (let [others (remove #{person} people)
+                               object (rand-nth others)
+                               feeling (rand-nth [:like :like :fear :anger])]
+                           [(gossip/->belief person person person object feeling)])))
+                     people)]
+    (if (seq news)
+      (d/db-with db news)
+      db)))
+
 (defonce undo-buffer
   (atom ()))
 
@@ -836,11 +853,11 @@
          "Continue"
          ]])
      (when (:interactive @app-state)
-       (interactive-turn-pane app-state ui-state))
+       [interactive-turn-pane app-state ui-state])
      (when-let [enc (:encounter @app-state)]
        (if-let [playing-as (:playing-as @ui-state)]
-         (other-turn-playing-pane ui-state enc db playing-as)
-         (other-turn-not-playing-pane ui-state enc db)))
+         [other-turn-playing-pane ui-state enc db playing-as]
+         [other-turn-not-playing-pane ui-state enc db]))
      ]))
 
 (defn navbar
@@ -901,7 +918,10 @@
                                   :playing-as new-as)
                            (when new-as
                              (swap! ui-state assoc-in
-                                    [:adding-belief :belief/subject] new-as))))}
+                                    [:adding-belief :belief/subject] new-as)
+                             (swap! ui-state assoc :final-results nil)
+                             (swap-advance! app-state update :db init-beliefs))))
+            }
            (for [person (cons "not playing" people)]
              [:option {:key (name person)
                        :value (name person)}
@@ -914,8 +934,16 @@
           {:type :button
            :on-click
            (fn [_]
-             (swap! ui-state assoc
-                    :playing-as nil))
+             (let [db (:db @app-state)
+                   people (gossip/all-people db)
+                   popus (->>
+                          (for [x people]
+                            [x (or (d/q gossip/my-true-popularity-q db x)
+                                   0)])
+                          (sort-by val >))]
+               (swap! ui-state assoc :final-results popus)
+               (swap! ui-state assoc :playing-as nil))
+             )
            }
           "End game"]])
       ]
@@ -928,11 +956,30 @@
         " for Zari Andrews."]]]
      ]]])
 
+(defn final-results-pane
+  [ui-state popus]
+  [:div
+   [:h3
+    "Final popularity scores"]
+   (into [:ul]
+         (for [[index [person likes]] (map-indexed vector popus)]
+           [:li.lead
+            (name person)
+            " was liked by "
+            [:span.badge likes]
+            " ... "
+            (cond
+              (zero? index) "🎉"
+              (== index 1) "🎻"
+              (or (== index (dec (count popus))) (zero? likes)) "💩")]))])
+
 (defn app-pane
   [app-state ui-state]
   [:div
    [navbar app-state ui-state]
    [:div.container-fluid
+    (when-let [popus (:final-results @ui-state)]
+      [final-results-pane ui-state popus])
     ;; can not alter db when it will be replaced:
     (when-not (or (:encounter @app-state)
                   (:interactive @app-state)

@@ -147,14 +147,17 @@
                      ;; no existing record
                      [(dissoc belief :db/id)]))))))
 
+(defn ->belief
+  [person mind subject object feeling]
+  {:belief/person person
+   :belief/mind mind
+   :belief/subject subject
+   :belief/object object
+   :belief/feeling feeling})
+
 (defn believe
   ([db person mind subject object feeling]
-   (let [belief {:belief/person person
-                 :belief/mind mind
-                 :belief/subject subject
-                 :belief/object object
-                 :belief/feeling feeling}]
-     (believe db belief)))
+   (believe db (->belief person mind subject object feeling)))
   ([db belief]
    (d/db-with db (replacement-beliefs db [belief]))))
 

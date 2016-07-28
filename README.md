@@ -56,6 +56,11 @@ rules:
 
 [Play it here.](http://floybix.github.io/gossip/)
 
+Begin by making 4 characters.
+
+Then select **Playing as:** to be one of the characters. That will
+start the game. Each character starts with one random feeling.
+
 
 ## Code
 
