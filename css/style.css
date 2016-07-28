@@ -1,0 +1,22 @@
+/* some style */
+
+.belief {
+    padding: 2px 6px;
+    margin: 0px -6px;
+    font-size: 85%;
+    border-radius: 4px;
+    box-shadow: none;
+}
+
+.belief-lie {
+    color: #ffffff;
+    background-color: #34495e;
+}
+
+.form-inline > * {
+    margin-left: 3px;
+}
+
+.draggable {
+    cursor: move;
+}
