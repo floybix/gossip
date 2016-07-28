@@ -52,8 +52,10 @@
                    (when @dragging
                      (reset! dragging nil)))]
     [:svg
-     {:width "100vw"
-      :height "50vh"
+     {;:width "100%"
+      ;:height "50%"
+      :style {:width "100%"
+              :height "50vh"}
       :onMouseMove drag-move
       :onTouchMove drag-move
       :onMouseUp drag-end

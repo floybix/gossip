@@ -19,6 +19,7 @@
 
 (defonce ui-state
   (atom {:current-pov nil
+         :started? false
          :playing-as nil
          :avatars {}
          :choosing-avatar nil
@@ -118,23 +119,27 @@
                id (keyword s)
                gender (if (:male? person)
                         :male :female)
-               avatar (rand-nth avatars)]
+               avatar (rand-nth avatars)
+               people (gossip/all-people (:db @app-state))
+               first? (empty? people)]
            (swap-advance! app-state update :db
                           d/db-with [{:person/id id
                                       :person/gender gender}])
            (swap! ui-state
                   (fn [m]
-                    (-> m
+                    (-> (if first?
+                          (assoc m :playing-as id)
+                          m)
                         (assoc-in [:avatars id] avatar)
-                        (assoc-in [:graph-coords id] [(+ 100 (rand-int 300))
-                                                      (+ 100 (rand-int 200))])
+                        (assoc-in [:graph-coords id] [(+ 50 (rand-int 200))
+                                                      (+ 50 (rand-int 100))])
                         (assoc-in [:adding-person :name] ""))))))
        :disabled (when (str/blank? (:name person))
                    "disabled")}
       "Add person"]]))
 
 (defn belief-input
-  [ui-state ui-state-key db subj-disabled]
+  [ui-state ui-state-key db]
   (let [belief (get @ui-state ui-state-key)
         people (gossip/all-people db)]
     [:div.form-group
@@ -145,8 +150,7 @@
                      (let [s (-> e .-target forms/getValue)]
                        (swap! ui-state assoc-in
                               [ui-state-key :belief/subject]
-                              (when-not (str/blank? s) (keyword s)))))
-        :disabled (when subj-disabled "disabled")}
+                              (when-not (str/blank? s) (keyword s)))))}
        (for [person (cons " " people)]
          [:option {:key person
                    :value person}
@@ -190,7 +194,7 @@
         object (:belief/object belief)
         db (:db @app-state)]
     [:div.form-inline.well
-     (belief-input ui-state :adding-belief db (:playing-as @ui-state))
+     (belief-input ui-state :adding-belief db)
      ;; add button
      [:button.btn.btn-default
       {:on-click
@@ -555,7 +559,7 @@
            [:b (str (name player) ": ")]
            ]
           [:div.form-inline
-           (belief-input ui-state :play-belief db false)
+           (belief-input ui-state :play-belief db)
            ;; gossip button
            [:button.btn
             {:class (if legit? "btn-success" "btn-warning")
@@ -811,7 +815,9 @@
      (when (and (not (:encounter @app-state))
                 (not (:interactive @app-state)))
        [:div
-        (when (>= (count people) 3)
+        (when (and (>= (count people) 3)
+                   (or (not (:playing-as @ui-state))
+                       (:started? @ui-state)))
           [:button.btn.btn-primary.btn-block
            {:on-click (fn [_]
                         (if-let [player (:playing-as @ui-state)]
@@ -841,9 +847,18 @@
             }
            "Next encounter"
            ])
-        (when-not (:playing-as @ui-state)
-          [:p.lead
-           "You can add feelings or people now."])])
+        [:p.lead
+         (cond
+           (< (count people) 3)
+           "Add people. You need at least 3 characters."
+           (and (:playing-as @ui-state)
+                (not (:started? @ui-state)))
+           "Ready when you are... add more people if you want."
+           (:playing-as @ui-state)
+           "Keep going with the game. End it when you've had enough."
+           :else ;; not playing (e.g. finished)
+           "You are not playing. You can still simulate encounters though."
+           )]])
      (when (or (:encounter @app-state)
                (:continued (:interactive @app-state)))
        [:div
@@ -868,49 +883,49 @@
 
 (defn navbar
   [app-state ui-state]
-  [:nav.navbar.navbar-default
-   [:div.container-fluid
-    [:div.navbar-header
-     [:a.navbar-brand {:href "https://github.com/floybix/gossip"}
-      "Gossip."]]
-    [:div
-     [:ul.nav.navbar-nav
-      ;; step back
-      [:li
-       [:button.btn.btn-default.navbar-btn
-        {:type :button
-         :on-click
-         (fn [_]
-           (let [new-state (peek @undo-buffer)]
-             (swap! undo-buffer pop)
-             (swap! redo-buffer conj @app-state)
-             (reset! app-state new-state)))
-         :title "Step backward in time"
-         :disabled (when (empty? @undo-buffer) "disabled")}
-        [:span.glyphicon.glyphicon-step-backward {:aria-hidden "true"}]
-        [:span.visible-xs-inline " Step backward"]]]
-      ;; step forward
-      (when-not (empty? @redo-buffer)
+  (let [db (:db @app-state)
+        people (gossip/all-people db)]
+    [:nav.navbar.navbar-default
+     [:div.container-fluid
+      [:div.navbar-header
+       [:a.navbar-brand {:href "https://github.com/floybix/gossip"}
+        "Gossip."]]
+      [:div
+       [:ul.nav.navbar-nav
+        ;; step back
         [:li
          [:button.btn.btn-default.navbar-btn
           {:type :button
            :on-click
            (fn [_]
-             (let [new-state (peek @redo-buffer)]
-               (swap! redo-buffer pop)
-               (swap! undo-buffer conj @app-state)
+             (let [new-state (peek @undo-buffer)]
+               (swap! undo-buffer pop)
+               (swap! redo-buffer conj @app-state)
                (reset! app-state new-state)))
-           :title "Step forward in time"
-           :disabled (when (empty? @redo-buffer) "disabled")}
-          [:span.glyphicon.glyphicon-step-forward {:aria-hidden "true"}]
-          [:span.visible-xs-inline " Step forward"]]])
-      ;; timestep
-      [:li
-       [:p.navbar-text
-        (str " Day " (:day @app-state))]]
-      ;; playing as
-      (let [db (:db @app-state)
-            people (gossip/all-people db)]
+           :title "Step backward in time"
+           :disabled (when (empty? @undo-buffer) "disabled")}
+          [:span.glyphicon.glyphicon-step-backward {:aria-hidden "true"}]
+          [:span.visible-xs-inline " Step backward"]]]
+        ;; step forward
+        (when-not (empty? @redo-buffer)
+          [:li
+           [:button.btn.btn-default.navbar-btn
+            {:type :button
+             :on-click
+             (fn [_]
+               (let [new-state (peek @redo-buffer)]
+                 (swap! redo-buffer pop)
+                 (swap! undo-buffer conj @app-state)
+                 (reset! app-state new-state)))
+             :title "Step forward in time"
+             :disabled (when (empty? @redo-buffer) "disabled")}
+            [:span.glyphicon.glyphicon-step-forward {:aria-hidden "true"}]
+            [:span.visible-xs-inline " Step forward"]]])
+        ;; timestep
+        [:li
+         [:p.navbar-text
+          (str " Day " (:day @app-state))]]
+        ;; playing as
         [:form.navbar-form.navbar-left
          [:div.form-group
           [:label
@@ -926,47 +941,69 @@
                              (swap! ui-state assoc-in
                                     [:adding-belief :belief/subject] new-as)
                              (swap! ui-state assoc :final-results nil)
-                             (swap-advance! app-state update :db init-beliefs))))
+                             )))
             }
-           (for [person (cons "not playing" people)]
-             [:option {:key (name person)
-                       :value (name person)}
-              (name person)])
+           (doall
+            (for [person (cons "not playing" people)]
+              [:option {:key (name person)
+                        :value (name person)}
+               (name person)]))
            ]
-          ]])
-      (when (:playing-as @ui-state)
+          ]]
+        (when (and (:playing-as @ui-state)
+                   (not (:started? @ui-state))
+                   (>= (count people) 3))
+          [:li
+           [:button.btn.btn-primary.navbar-btn
+            {:type :button
+             :on-click
+             (fn [_]
+               (swap! ui-state assoc :started? true)
+               (swap-advance! app-state update :db init-beliefs)
+               )
+             }
+            "Start game"]])
+        (when (and (:playing-as @ui-state)
+                   (:started? @ui-state))
+          [:li
+           [:button.btn.btn-default.navbar-btn
+            {:type :button
+             :on-click
+             (fn [_]
+               (let [db (:db @app-state)
+                     people (gossip/all-people db)
+                     popus (->>
+                            (for [x people]
+                              [x (or (d/q gossip/my-true-popularity-q db x)
+                                     0)])
+                            (sort-by val >))]
+                 (swap! ui-state assoc :final-results popus)
+                 (swap! ui-state assoc :playing-as nil, :started? false))
+               )
+             }
+            "End game"]])
+        ]
+       ;; right-aligned items
+       [:ul.nav.navbar-nav.navbar-right
+        ;; dedication
         [:li
-         [:button.btn.btn-default.navbar-btn
-          {:type :button
-           :on-click
-           (fn [_]
-             (let [db (:db @app-state)
-                   people (gossip/all-people db)
-                   popus (->>
-                          (for [x people]
-                            [x (or (d/q gossip/my-true-popularity-q db x)
-                                   0)])
-                          (sort-by val >))]
-               (swap! ui-state assoc :final-results popus)
-               (swap! ui-state assoc :playing-as nil))
-             )
-           }
-          "End game"]])
-      ]
-     ;; right-aligned items
-     [:ul.nav.navbar-nav.navbar-right
-      ;; dedication
-      [:li
-       [:p.navbar-text "made with "
-        [:small {:style {:margin-right "0.5ex"}} "💛"]
-        " for Zari Andrews."]]]
-     ]]])
+         [:p.navbar-text "made with "
+          [:small {:style {:margin-right "0.5ex"}} "💛"]
+          " for Zari Andrews."]]]
+       ]]]))
 
 (defn final-results-pane
   [ui-state popus]
   [:div
    [:h3
-    "Final popularity scores"]
+    "Final popularity scores "
+    [:small
+     [:a
+      {:href "#"
+       :on-click
+       (fn [_]
+         (swap! ui-state assoc :final-results nil))}
+      "[x]"]]]
    (into [:ul]
          (for [[index [person likes]] (map-indexed vector popus)]
            [:li.lead
@@ -989,7 +1026,7 @@
     ;; can not alter db when it will be replaced:
     (when-not (or (:encounter @app-state)
                   (:interactive @app-state)
-                  (:playing-as @ui-state))
+                  (:started? @ui-state))
       [:div.row
        [:div.col-lg-6
         [add-person-pane app-state ui-state]]
