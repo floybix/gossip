@@ -564,7 +564,6 @@
                       :belief/complex-cause :lied-about-me}
                ;; if we thought they liked us before, now assume they don't.
                ;; this prevents listener from reciprocally re-liking fabricator...
-               ;; TODO: need this?? might be detrimental to listener.
                nolike {:belief/person listener
                        :belief/mind listener
                        :belief/subject from
@@ -708,40 +707,26 @@
      }))
 
 (defn turn*
-  "Person has a turn being the initiator of an encounter.
+  "A turn consisting of a forward part, where the initiator speaks to
+  the partner, and a back part where the partner speaks to the
+  initiator. This function does not do thinking, except for one time
+  when the partner thinks before starting their part.
 
-  Play proceeds as follows:
+  Each part proceeds as follows:
 
-  * Initiator chooses a partner. (currently random)
-  * Forward part; initiator is speaker, partner is listener.
   * Speaker chooses beliefs (possibly lies) to tell.
-    - TODO: choose based on own model of their mind?
-      - so listener can learn what we know
-      - BUT would never pass on lies to subject because assume they know it.
-      - what if we just pass on all our own beliefs? (excluding direct feelings)
-        - could choose to add lies (or omit some beliefs?)
-          - prioritize favourable info:
-          - someone likes me, someone angry/fear others
-      - keep telling until we come up with new gossip
-        - ! if no new gossip, fall into debt with the listener / otherwise clear.
-        - ! if were already in debt, we are forced to tell a lie!
+    - prioritizing favourable info.
+    - keep telling until we come up with new gossip
+    - if no new gossip, fall into debt with the listener / otherwise clear.
   * Listener checks whether
     - they already know it
     - they hold a more recent belief
     - it is a lie, which they can check if they are the subject
   * Listener responds with any corrections
-    - including that they are angry with the source of a lie.
+  - including that they are angry with the source of a lie.
   * Listener updates their own beliefs according to corrected version
-  * Listener updates model of speaker mind according to corrected version
+  * Listener also updates their model of speaker mind and subject mind
   * Speaker updates model of listener mind with corrected version
-  * Speaker thinks.
-  * Listener thinks.
-  * Backward part; initiator is listener, partner is speaker.
-
-  Many beliefs are communicated, and many will be already known by the
-  listener. In narrative, maybe list the ones that are changing the
-  speaker's model of listener, each like ''Yeah, I know.''
-  The headline gossip is the new belief held by the listener. (if any)
 
   Outdated info does not count as gossip, but a lie that is uncovered does.
 

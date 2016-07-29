@@ -247,7 +247,7 @@
      [:div.row
       [:div.col-lg-12
        [:p
-        "Hover on beliefs for info. "
+        "Drag people. Hover on beliefs for info. "
         (if pov
           [:span
            "Showing what " [:b (name pov)] " knows. "
@@ -263,6 +263,7 @@
       [:div.col-lg-12
        (viz/social-graph-svg ui-state db pov)]
       ]
+     [:p "Click avatars to change them. Hover on beliefs for info."]
      (into [:div.row]
            (for [mind people
                  :let [avatar (get-in @ui-state [:avatars mind] "@")]]
@@ -905,7 +906,7 @@
            :title "Step backward in time"
            :disabled (when (empty? @undo-buffer) "disabled")}
           [:span.glyphicon.glyphicon-step-backward {:aria-hidden "true"}]
-          [:span.visible-xs-inline " Step backward"]]]
+          " Undo"]]
         ;; step forward
         (when-not (empty? @redo-buffer)
           [:li
@@ -920,7 +921,7 @@
              :title "Step forward in time"
              :disabled (when (empty? @redo-buffer) "disabled")}
             [:span.glyphicon.glyphicon-step-forward {:aria-hidden "true"}]
-            [:span.visible-xs-inline " Step forward"]]])
+            " Redo"]])
         ;; timestep
         [:li
          [:p.navbar-text
@@ -962,7 +963,7 @@
                (swap-advance! app-state update :db init-beliefs)
                )
              }
-            "Start game"]])
+            "Start game playing as " [:b (name (:playing-as @ui-state))]]])
         (when (and (:playing-as @ui-state)
                    (:started? @ui-state))
           [:li
@@ -1030,8 +1031,11 @@
       [:div.row
        [:div.col-lg-6
         [add-person-pane app-state ui-state]]
-       [:div.col-lg-6
-        [add-belief-pane app-state ui-state]]]
+       ;; only show belief controls when explicitly not playing
+       (when (and (seq (:avatars @ui-state))
+                  (not (:playing-as @ui-state)))
+         [:div.col-lg-6
+          [add-belief-pane app-state ui-state]])]
       )
     [:div.row
      [:div.col-lg-4.col-md-6

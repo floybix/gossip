@@ -97,14 +97,19 @@
 
 (defn belief-explanation
   [db pov belief]
-  (str
-   (when-let [cause-ref (:belief/cause belief)]
-     (let [cause (d/pull db '[*] (:db/id cause-ref))]
-       (str "Because "
-            (phrase-belief db cause nil nil)
-            " ")))
-   (when-let [source (:belief/source belief)]
-     (str "Heard it from " (name source) "."))))
+  (let [cause-ref (:belief/cause belief)
+        source (:belief/source belief)
+        expl (if cause-ref
+               (let [cause (d/pull db '[*] (:db/id cause-ref))]
+                 (str "Because "
+                      (phrase-belief db cause nil nil)
+                      " "))
+               "I don't know why. ")
+        ]
+    (cond->
+        expl
+      source
+      (str "Heard it from " (name source) "."))))
 
 (defn phrase-gossip
   "Returns string"

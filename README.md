@@ -56,10 +56,10 @@ rules:
 
 You can [play it here.](https://floybix.github.io/gossip/)
 
-Begin by making up 4 characters. Then select **(Playing as:)** to be one
-of the characters. That will start the game. Each character starts
-with one random feeling. Keep doing **(Next encounter)** until you've
-had enough, then **(End game)** to see who ended up being most popular.
+Begin by making up 4 characters. Then click **(Start game playing as
+Foo)**. Each character starts with one random feeling. Keep doing
+**(Next encounter)** until you've had enough, then **(End game)** to
+see who ended up being most popular.
 
 
 ## Code
