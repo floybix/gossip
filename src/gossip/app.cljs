@@ -235,7 +235,7 @@
       (when on-click
         {:on-click on-click
          :style {:cursor "pointer"}})
-      (narr/phrase-belief db belief mind nil)]]))
+      (narr/phrase-belief db mind nil belief)]]))
 
 (defn status-pane
   [app-state ui-state]
@@ -371,7 +371,7 @@
      ]))
 
 (defn turn-part-pane
-  [part reply owing-after? playing?]
+  [part owing-after? playing?]
   (let [{:keys [speaker listener gossip existing reaction exposed-lie?]} part
         db (:db-before part)
         spe (name speaker)
@@ -390,7 +390,7 @@
            [:p
             [:b (str lis ": ")]
             (-> (rand-nth narr/correction-phrases)
-                (replacem {"CORRECT" (narr/phrase-belief db corrected listener speaker)
+                (replacem {"CORRECT" (narr/phrase-belief db listener speaker corrected)
                            }))
             ]]
           )))
@@ -437,7 +437,7 @@
               (str/join " And "
                         (map (fn [b]
                                (str "I know that "
-                                    (narr/phrase-belief db b speaker listener)))
+                                    (narr/phrase-belief db speaker listener b)))
                              minor)))]
         [:p
          [:b (str lis ": ")]
@@ -682,7 +682,6 @@
                              "" false true)])
           (avatar-float ui-state partner "right")
           (turn-part-pane (:back-part enc)
-                          (:back-reply enc)
                           (gossip/indebted db par ini)
                           true)
           (when (:gossip (:back-cause-part enc))
@@ -751,7 +750,6 @@
        (:meet-phrase enc)]
       (avatar-float ui-state ini "left")
       (turn-part-pane (:fwd-part enc)
-                      (:fwd-reply enc)
                       (gossip/indebted db ini par)
                       false)
       (when (:gossip (:fwd-cause-part enc))
@@ -771,7 +769,6 @@
                (str/join \newline))]])
       (avatar-float ui-state par "right")
       (turn-part-pane (:back-part enc)
-                      (:back-reply enc)
                       (gossip/indebted db par ini)
                       false)
       (when (:gossip (:back-cause-part enc))

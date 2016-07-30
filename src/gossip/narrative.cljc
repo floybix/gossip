@@ -8,6 +8,45 @@
             #?(:cljs [goog.string :as gstring :refer [format]])
             #?(:cljs [goog.string.format])))
 
+(defn phrase-belief
+  [db speaker listener belief]
+  (let [subj (:belief/subject belief)
+        obj (:belief/object belief)
+        feel (:belief/feeling belief)
+        my-feeling? (= subj speaker)
+        your-feeling? (= subj listener)
+        about-me? (= obj speaker)
+        about-you? (= obj listener)
+        obj-name (cond
+                   (= listener obj) "you"
+                   (= speaker obj) "me"
+                   :else (name obj))]
+    (cond
+      (not feel) ""
+      ;; my feeling
+      (= subj speaker) ;; quite different grammar...
+      (case feel
+        :like (format "I like %s." obj-name)
+        :anger (format "I'm angry with %s." obj-name)
+        :fear (format "I'm afraid of %s." obj-name)
+        :none (format "I don't care about %s." obj-name))
+      ;; your feeling
+      (= subj listener)
+      (case feel
+        :like (format "you like %s." obj-name)
+        :anger (format "you are angry with %s." obj-name)
+        :fear (format "you are afraid of %s." obj-name)
+        :none (format "you don't care about %s." obj-name))
+      ;; someone else's feeling
+      :else
+      (case feel
+        :like (format "%s likes %s." (name subj) obj-name)
+        :anger (format "%s is angry with %s." (name subj) obj-name)
+        :fear (format "%s is afraid of %s." (name subj) obj-name)
+        :none (format "%s doesn't care about %s." (name subj) obj-name))
+      )
+    ))
+
 (defn meeting-phrase
   [db initiator partner]
   (-> ["At a party that night, SPE walks up to LIS and talks to HIM/HER."
@@ -56,45 +95,6 @@
   ["That sucks."
    "Oh man, that's just like them."])
 
-(defn phrase-belief
-  [db belief speaker listener]
-  (let [subj (:belief/subject belief)
-        obj (:belief/object belief)
-        feel (:belief/feeling belief)
-        my-feeling? (= subj speaker)
-        your-feeling? (= subj listener)
-        about-me? (= obj speaker)
-        about-you? (= obj listener)
-        obj-name (cond
-                   (= listener obj) "you"
-                   (= speaker obj) "me"
-                   :else (name obj))]
-    (cond
-      (not feel) ""
-      ;; my feeling
-      (= subj speaker) ;; quite different grammar...
-      (case feel
-        :like (format "I like %s." obj-name)
-        :anger (format "I'm angry with %s." obj-name)
-        :fear (format "I'm afraid of %s." obj-name)
-        :none (format "I don't care about %s." obj-name))
-      ;; your feeling
-      (= subj listener)
-      (case feel
-        :like (format "you like %s." obj-name)
-        :anger (format "you are angry with %s." obj-name)
-        :fear (format "you are afraid of %s." obj-name)
-        :none (format "you don't care about %s." obj-name))
-      ;; someone else's feeling
-      :else
-      (case feel
-        :like (format "%s likes %s." (name subj) obj-name)
-        :anger (format "%s is angry with %s." (name subj) obj-name)
-        :fear (format "%s is afraid of %s." (name subj) obj-name)
-        :none (format "%s doesn't care about %s." (name subj) obj-name))
-      )
-    ))
-
 (defn belief-explanation
   [db pov belief]
   (let [cause-ref (:belief/cause belief)
@@ -102,7 +102,7 @@
         expl (if cause-ref
                (let [cause (d/pull db '[*] (:db/id cause-ref))]
                  (str "Because "
-                      (phrase-belief db cause nil nil)
+                      (phrase-belief db nil nil cause)
                       " "))
                "I don't know why. ")
         ]
@@ -125,7 +125,7 @@
                          (str prefix* " I heard")
                          :else
                          prefix*)
-        message-str (phrase-belief db belief speaker listener)
+        message-str (phrase-belief db speaker listener belief)
         explain-str (cond
                       ;; a simple cause
                       (:belief/cause belief)
@@ -133,7 +133,7 @@
                             cause (d/pull db '[*] (:db/id cause-ref))]
                         (when (:belief/feeling cause)
                           (str "It all started because "
-                               (phrase-belief db cause speaker listener))))
+                               (phrase-belief db speaker listener cause))))
                       ;; a complex cause
                       (:belief/complex-cause belief)
                       (let [cc (:belief/complex-cause belief)]
@@ -207,18 +207,18 @@
            (if (= :like (:belief/feeling gossip))
              (str " I don't like " (him-her db (:belief/object gossip)) ".")
              (when existing
-               (str " " (phrase-belief db existing listener speaker))))
+               (str " " (phrase-belief db listener speaker existing))))
            " "
            (-> (rand-nth lie-response-phrases)
                (replacem {"SOURCE" (name source)}))))
     ;; correcting outdated
     wrong?
     (-> (rand-nth correction-phrases)
-        (replacem {"CORRECT" (phrase-belief db existing listener speaker)}))
+        (replacem {"CORRECT" (phrase-belief db listener speaker existing)}))
     ;; note existing belief that was replaced, if any
     (and news? existing)
     (-> (rand-nth correction-response-phrases)
-        (replacem {"OLDBELIEF" (phrase-belief db existing listener speaker)}))
+        (replacem {"OLDBELIEF" (phrase-belief db listener speaker existing)}))
     ;; gossip
     news?
     (rand-nth positive-response-phrases)
@@ -260,9 +260,9 @@
     [(:belief/feeling stance :none)
      (:belief/feeling versus :none)
      (str
-      (phrase-belief db (or stance no-stance) nil nil)
+      (phrase-belief db nil nil (or stance no-stance))
       ".. " vs " thinks "
-      (-> (phrase-belief db (or versus no-versus) nil nil)
+      (-> (phrase-belief db nil nil (or versus no-versus))
           (replacem {(name initiator) (him-her db initiator)}))
       )]))
 
@@ -314,23 +314,12 @@
           par-str))))
 
 (defn narrate-turn
-  [{:keys [db fwd-part back-part fwd-thoughts back-thoughts
+  [{:keys [db fwd-part fwd-cause-part back-part back-cause-part
            initiator partner]
     :as turn}]
   (let [
         meet-str (meeting-phrase db initiator partner)
-        fwd-reply (when (:gossip fwd-part)
-                    (if (contains? #{:anger :fear}
-                                   (:belief/feeling (first fwd-thoughts)))
-                      (rand-nth negative-response-phrases)
-                      (rand-nth positive-response-phrases)))
-        back-reply (when (:gossip back-part)
-                     (if (contains? #{:anger :fear}
-                                    (:belief/feeling (first back-thoughts)))
-                       (rand-nth negative-response-phrases)
-                       (rand-nth positive-response-phrases)))]
+        ]
     (assoc turn
-           :meet-phrase meet-str
-           :fwd-reply fwd-reply
-           :back-reply back-reply)
+           :meet-phrase meet-str)
     ))
