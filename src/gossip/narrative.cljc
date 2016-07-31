@@ -62,6 +62,23 @@
    "I wanted to tell you,"
    "OMG I can't believe it!"])
 
+(defn gossipy-belief-phrase
+  [db speaker listener belief]
+  (let [subj (:belief/subject belief)
+        obj (:belief/object belief)
+        source (:belief/source belief)
+        prefix* (rand-nth message-prefixes)
+        message-prefix (cond
+                         (= listener subj source)
+                         (str "You know how you told me")
+                         (= listener subj)
+                         (str prefix* " I heard")
+                         :else
+                         prefix*)
+        message-str (phrase-belief db speaker listener belief)
+        ]
+    (str message-prefix " " message-str)))
+
 (def no-gossip-phrases
   ["I got nothing, sorry."])
 
@@ -74,8 +91,20 @@
 (def correction-phrases
   ["No, that's wrong. Now CORRECT"])
 
-(def correction-response-phrases
+(defn correction-phrase
+  [db speaker listener attempt corrected]
+  (-> (rand-nth correction-phrases)
+      (replacem {"CORRECT" (phrase-belief db listener speaker corrected)
+                 })))
+
+(def update-phrases
   ["Really? So it's not true that OLDBELIEF"])
+
+(defn update-phrase
+  [db speaker listener new old]
+  (-> (rand-nth update-phrases)
+      (replacem {"OLDBELIEF" (phrase-belief db listener speaker old)
+                 })))
 
 (def embarrassed-phrases
   [[:span [:i "Gulp."] " Er, gotta go now, bye!"]])
@@ -117,15 +146,7 @@
   (let [subj (:belief/subject belief)
         obj (:belief/object belief)
         source (:belief/source belief)
-        prefix* (rand-nth message-prefixes)
-        message-prefix (cond
-                         (= listener subj source)
-                         (str "You know how you told me")
-                         (= listener subj)
-                         (str prefix* " I heard")
-                         :else
-                         prefix*)
-        message-str (phrase-belief db speaker listener belief)
+        message-str (gossipy-belief-phrase db speaker listener belief)
         explain-str (cond
                       ;; a simple cause
                       (:belief/cause belief)
@@ -193,7 +214,7 @@
                      ;; there is no source
                      "")
         ]
-    (str/join \newline [message-prefix message-str explain-str source-str])))
+    (str/join \newline [message-str explain-str source-str])))
 
 (defn phrase-response
   [db speaker listener gossip
@@ -213,12 +234,10 @@
                (replacem {"SOURCE" (name source)}))))
     ;; correcting outdated
     wrong?
-    (-> (rand-nth correction-phrases)
-        (replacem {"CORRECT" (phrase-belief db listener speaker existing)}))
+    (correction-phrase db speaker listener gossip existing)
     ;; note existing belief that was replaced, if any
     (and news? existing)
-    (-> (rand-nth correction-response-phrases)
-        (replacem {"OLDBELIEF" (phrase-belief db listener speaker existing)}))
+    (update-phrase db speaker listener gossip existing)
     ;; gossip
     news?
     (rand-nth positive-response-phrases)

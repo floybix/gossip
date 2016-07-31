@@ -389,9 +389,7 @@
             (narr/phrase-gossip db speaker listener attempt)]
            [:p
             [:b (str lis ": ")]
-            (-> (rand-nth narr/correction-phrases)
-                (replacem {"CORRECT" (narr/phrase-belief db listener speaker corrected)
-                           }))
+            (narr/correction-phrase db speaker listener attempt corrected)
             ]]
           )))
      ;; the valid gossip if any (or the belief which was exposed as a lie)
@@ -679,7 +677,7 @@
               [:b (str (name par) ": ")]
               "Wait, what?"]
              (turn-part-pane (:fwd-cause-part enc)
-                             "" false true)])
+                             false true)])
           (avatar-float ui-state partner "right")
           (turn-part-pane (:back-part enc)
                           (gossip/indebted db par ini)
@@ -690,7 +688,7 @@
               [:b (str (name ini) ": ")]
               "Wait, what?"]
              (turn-part-pane (:back-cause-part enc)
-                             "" false true)])
+                             false true)])
           ;; listener's thoughts after the interaction
           (when-let [thoughts (seq (:back-thoughts enc))]
             [:p
@@ -758,7 +756,7 @@
           [:b (str (name par) ": ")]
           "Wait, what?"]
          (turn-part-pane (:fwd-cause-part enc)
-                         "" false false)])
+                         false false)])
       ;; listener's thoughts after the interaction
       (when-let [thoughts (seq (:fwd-thoughts enc))]
         [:p
@@ -777,7 +775,7 @@
           [:b (str (name par) ": ")]
           "Wait, what?"]
          (turn-part-pane (:back-cause-part enc)
-                         "" false false)])
+                         false false)])
       ;; listener's thoughts after the interaction
       (when-let [thoughts (seq (:back-thoughts enc))]
         [:p
