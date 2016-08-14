@@ -80,7 +80,8 @@
     (str message-prefix " " message-str)))
 
 (def no-gossip-phrases
-  ["I got nothing, sorry."])
+  ["I got nothing, sorry."
+   "What have you got?"])
 
 (def no-gossip-response-phrases
   ["You owe me, ok?"])
@@ -116,13 +117,27 @@
 (def already-knew-response-phrases
   ["Yeah yeah, I know."])
 
-(def positive-response-phrases
-  ["Ha ha."
-   "Oh wow."])
-
-(def negative-response-phrases
-  ["That sucks."
-   "Oh man, that's just like them."])
+(defn response-phrase
+  [db speaker listener belief]
+  (let [feel (:belief/feeling belief)]
+  (println "response-phrase feel" feel)
+    (cond
+      (= :like feel)
+      (rand-nth
+        ["Oooooh."
+         "No way."])
+      (= :fear feel)
+      (rand-nth
+        ["Oh no!"
+         "That is terrible."])
+      (= :anger feel)
+      (rand-nth
+        ["That sucks."
+         "Oh man, that's just like them."])
+      :else
+      "Oh."
+    )
+  ))
 
 (defn belief-explanation
   [db pov belief]
@@ -240,7 +255,7 @@
     (update-phrase db speaker listener gossip existing)
     ;; gossip
     news?
-    (rand-nth positive-response-phrases)
+    (response-phrase db speaker listener gossip)
     ;; listener didn't know that speaker knew that
     minor-news?
     (rand-nth minor-news-response-phrases)
