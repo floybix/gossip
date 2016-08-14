@@ -80,8 +80,7 @@
     (str message-prefix " " message-str)))
 
 (def no-gossip-phrases
-  ["I got nothing, sorry."
-   "What have you got?"])
+  ["I got nothing, sorry."])
 
 (def no-gossip-response-phrases
   ["You owe me, ok?"])
