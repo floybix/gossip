@@ -6,7 +6,7 @@ So gossip, very emotion, wow.
 ## Overview
 
 There are at least 3 people simulated in the game. It works better
-with 4 or 5.
+with 4.
 
 People have feelings: they may **like**, **fear** or be **angry** with
 others.
