@@ -54,6 +54,7 @@
     [:svg
      {;:width "100%"
       ;:height "50%"
+      :id "gossip-graph"
       :style {:width "100%"
               :height "50vh"}
       :onMouseMove drag-move

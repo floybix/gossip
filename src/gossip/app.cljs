@@ -1,6 +1,7 @@
 (ns gossip.app
   (:require [reagent.core :as reagent :refer [atom]]
             [goog.dom.forms :as forms]
+            [goog.style :as style]
             [datascript.core :as d]
             [gossip.core :as gossip :refer [he-she him-her replacem]]
             [gossip.narrative :as narr]
@@ -84,6 +85,31 @@
                    (str x skin))
                  others))))
 
+(defn square [x] (* x x))
+
+(defn init-coord-for
+  [coords id]
+  (let [el (.getElementById js/document "gossip-graph")
+        el-size (when el (style/getSize el))
+        width (.-width el-size)
+        height (.-height el-size)]
+    (if (seq coords)
+      (->>
+       (fn []
+         (let [x (+ 40 (rand-int (- width 80)))
+               y (+ 40 (rand-int (- height 80)))
+               dists (map (fn [[x2 y2]]
+                            (+ (square (- x2 x)) (square (- y2 y))))
+                          (vals coords))
+               closest-dist (apply min dists)]
+           [[x y] closest-dist]))
+       (repeatedly 200)
+       (apply max-key second)
+       (first)
+       (assoc coords id))
+      ;; no existing coords
+      (assoc coords id [50 50]))))
+
 (defn add-person-pane
   [app-state ui-state]
   (let [person (:adding-person @ui-state)]
@@ -131,8 +157,7 @@
                           (assoc m :playing-as id)
                           m)
                         (assoc-in [:avatars id] avatar)
-                        (assoc-in [:graph-coords id] [(+ 50 (rand-int 200))
-                                                      (+ 50 (rand-int 100))])
+                        (update :graph-coords init-coord-for id)
                         (assoc-in [:adding-person :name] ""))))))
        :disabled (when (str/blank? (:name person))
                    "disabled")}
