@@ -1,5 +1,6 @@
 (ns gossip.app
   (:require [reagent.core :as reagent :refer [atom]]
+            [goog.dom :as dom]
             [goog.dom.forms :as forms]
             [goog.style :as style]
             [datascript.core :as d]
@@ -89,10 +90,10 @@
 
 (defn init-coord-for
   [coords id]
-  (let [el (.getElementById js/document "gossip-graph")
+  (let [el (dom/getElementByClass "gossip-graph")
         el-size (when el (style/getSize el))
-        width (.-width el-size)
-        height (.-height el-size)]
+        width (if el (.-width el-size) 300)
+        height (if el (.-height el-size) 200)]
     (if (seq coords)
       (->>
        (fn []
